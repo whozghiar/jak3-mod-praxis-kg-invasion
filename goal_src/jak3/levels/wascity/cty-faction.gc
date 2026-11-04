@@ -21,6 +21,10 @@
 ;; ---exclusive-nav-info-mask
 
 
+;; og:praxis-kg-invasion added: the invasion's spawn permissions and fight music (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-permission (function int int int))
+(define-extern pki-fight-music (function symbol symbol))
+
 ;; DECOMP BEGINS
 
 (define *territory-list* (new 'static 'boxed-array :type pair '(#f) '(#f) '(#f) '(#f) '(#f) '(#f)))
@@ -156,6 +160,8 @@
 
 (defmethod cty-faction-manager-method-14 ((this cty-faction-manager) (arg0 nav-territory-type) (arg1 int) (arg2 int))
   (local-vars (gp-0 int))
+  ;; og:praxis-kg-invasion added: the invasion's answer in its conflict zones (-1: Jak 3's)
+  (let ((pki-perm (pki-permission (the-as int arg0) arg1))) (if (>= pki-perm 0) (return pki-perm)))
   (when (= arg0 (nav-territory-type invalid))
     (set! gp-0 0)
     (goto cfg-14)
@@ -439,7 +445,8 @@
               (set-time! (-> this start-fight-music-time))
               )
           (when (and (> (-> this start-fight-music-time) 0) (time-elapsed? (-> this start-fight-music-time) (seconds 5)))
-            (persist-with-delay *setting-control* 'cty-faction-music (seconds 1000) 'music 'fight1 0.0 0)
+            ;; og:praxis-kg-invasion added the hook (pki-fight-music): fight1, or the invasion's music
+            (persist-with-delay *setting-control* 'cty-faction-music (seconds 1000) 'music (pki-fight-music 'fight1) 0.0 0)
             (set-time! (-> this last-change-music-time))
             )
           )

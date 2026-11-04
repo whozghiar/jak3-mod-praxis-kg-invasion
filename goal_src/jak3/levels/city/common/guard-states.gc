@@ -5,6 +5,9 @@
 ;; name in dgo: guard-states
 ;; dgos: CWI
 
+;; og:praxis-kg-invasion added: the invasion's rule for the rifle butt (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-melee-ok? (function process-drawable symbol))
+
 ;; DECOMP BEGINS
 
 (defstate knocked-recover (crimson-guard)
@@ -461,7 +464,8 @@
                  )
              )
             (else
-              (if (crimson-guard-method-269 this s5-0)
+              ;; og:praxis-kg-invasion added the invasion's test (pki-melee-ok?): a guard of the invasion strikes Jak only
+              (if (and (crimson-guard-method-269 this s5-0) (pki-melee-ok? this))
                   (go (method-of-object this close-attack))
                   )
               )

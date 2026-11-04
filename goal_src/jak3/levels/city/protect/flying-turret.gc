@@ -5,6 +5,13 @@
 ;; name in dgo: flying-turret
 ;; dgos: CTYPESC
 
+;; og:praxis-kg-invasion added: the invasion's jetpack guards on this code (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-turret-skel-name (function process-drawable string))
+(define-extern pki-unit-scale (function process float float))
+(define-extern pki-attacker-type (function process int int))
+(define-extern pki-hover-animate (function process-drawable float none))
+(define-extern pki-hover-nozzle! (function process-drawable vector vector int symbol))
+
 ;; DECOMP BEGINS
 
 (defskelgroup skel-flying-turret kg-flying-turret kg-flying-turret-lod0-jg kg-flying-turret-idle-ja
@@ -510,8 +517,13 @@
           (set! (-> *part-id-table* 4709 init-specs 3 initial-valuef) (/ f0-8 2))
           )
         )
+      ;; og:praxis-kg-invasion added: a jetpack guard fires its flames from Jak 2's nozzles
+      (pki-hover-nozzle! this gp-0 s5-0 0)
       (draw-beam (-> *part-id-table* 4709) gp-0 s5-0 #f)
-      (vector+float*! gp-0 gp-0 (-> s4-0 rvec) 1228.8)
+      ;; og:praxis-kg-invasion added: the second flame from a jetpack guard's other nozzle
+      (if (not (pki-hover-nozzle! this gp-0 s5-0 1))
+          (vector+float*! gp-0 gp-0 (-> s4-0 rvec) 1228.8)
+          )
       (draw-beam (-> *part-id-table* 4709) gp-0 s5-0 #f)
       )
     )
@@ -526,6 +538,8 @@
         (flying-turret-method-226 this)
         )
     (flying-turret-method-227 this)
+    ;; og:praxis-kg-invasion added: a jetpack guard loops its idle or flying clip
+    (pki-hover-animate this (vector-length (-> this root transv)))
     (let* ((f0-0 (vector-length (-> this root transv)))
            (f0-1 (/ f0-0 (meters 15)))
            )
@@ -672,7 +686,8 @@
   "Typical place for shared init code. Runs from entity or process style init."
   (initialize-skeleton
     this
-    (the-as skeleton-group (art-group-get-by-name *level* "skel-flying-turret" (the-as (pointer level) #f)))
+    ;; og:praxis-kg-invasion added: "skel-flying-turret", or a jetpack guard of the invasion
+    (the-as skeleton-group (art-group-get-by-name *level* (pki-turret-skel-name this) (the-as (pointer level) #f)))
     (the-as pair 0)
     )
   (setup-enemy! this *flying-turret-nav-enemy-info*)
@@ -685,7 +700,10 @@
   (set! (-> this dist-run-anim) 16384.0)
   (set! (-> this anim-run) 2)
   (set! (-> this speed-run) 102400.0)
-  (set-vector! (-> this root scale) 2.0 2.0 2.0 1.0)
+  ;; og:praxis-kg-invasion added: the turret is drawn at 2.0, a jetpack guard at 1.0
+  (let ((scale (pki-unit-scale this 2.0)))
+    (set-vector! (-> this root scale) scale scale scale 1.0)
+    )
   (set! (-> this draw lod-set lod 0 dist) 409600.0)
   (set! (-> this engine-sound) (new-sound-id))
   (set! (-> this tilt-sound) (new-sound-id))
@@ -1265,7 +1283,8 @@
     (set! (-> this mission-squad) *cty-attack-controller*)
     (when (not (-> this attacker-info))
       (set! (-> this attacker-info) (allocate-attacker (-> this mission-squad)))
-      (init! (-> this attacker-info) this 10)
+      ;; og:praxis-kg-invasion added: turret (10), or the faction praxis-kguard for a jetpack guard
+      (init! (-> this attacker-info) this (pki-attacker-type this 10))
       )
     )
   (none)

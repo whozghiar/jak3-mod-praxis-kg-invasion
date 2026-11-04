@@ -5,6 +5,9 @@
 ;; name in dgo: guard-rifle
 ;; dgos: CWI
 
+;; og:praxis-kg-invasion added: the invasion's rule for the rifle butt (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-melee-ok? (function process-drawable symbol))
+
 ;; DECOMP BEGINS
 
 (defmethod crimson-guard-method-255 ((this crimson-guard))
@@ -98,6 +101,8 @@
                       gp-0
                       (not (logtest? (-> gp-0 focus-status) (focus-status disable dead ignore grabbed)))
                       )
+                 ;; og:praxis-kg-invasion added: during the invasion the rifle butt is for Jak alone (pki-melee-ok?)
+                 (pki-melee-ok? self)
                  )
             (go-virtual close-attack)
             )

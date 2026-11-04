@@ -9,6 +9,8 @@
 (define-extern traffic-object-spawn (function process traffic-object-spawn-params process-drawable))
 (define-extern level->sound-bank-name (function symbol symbol))
 (define-extern *traffic-fast-spawn* symbol)
+;; og:praxis-kg-invasion added: the invasion's unit counts (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-want-count (function int int int))
 
 (declare-type citizen-norm citizen)
 (define-extern citizen-norm type)
@@ -1252,8 +1254,9 @@
       (when (>= a0-3 0)
         (let ((a0-9 (-> *want-count-levels* a0-3 want-groups v1-3)))
           (dotimes (a1-7 (-> a0-9 bindings length))
+            ;; og:praxis-kg-invasion added: the stock count, or the invasion's
             (set! (-> *traffic-engine* object-type-info-array (-> a0-9 bindings a1-7 obj-type) want-count)
-                  (the-as int (-> a0-9 bindings a1-7 count))
+                  (pki-want-count (the-as int (-> a0-9 bindings a1-7 obj-type)) (the-as int (-> a0-9 bindings a1-7 count)))
                   )
             )
           )

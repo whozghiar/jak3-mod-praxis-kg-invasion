@@ -5,6 +5,10 @@
 ;; name in dgo: kg-squad-member
 ;; dgos: CWI
 
+;; og:praxis-kg-invasion added: the invasion's jetpack guards (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-hover? (function process symbol))
+(define-extern pki-hover-hatred (function process process float))
+
 ;; DECOMP BEGINS
 
 ;; WARN: Return type mismatch symbol vs none.
@@ -77,6 +81,10 @@
   )
 
 (defmethod enemy->hatred-val ((this kg-squad-member) (arg0 process))
+  ;; og:praxis-kg-invasion added: a jetpack guard of the invasion hates the Freedom League and Jak only
+  (if (pki-hover? this)
+      (return (pki-hover-hatred this arg0))
+      )
   (cond
     ((logtest? (process-mask guard) (-> arg0 mask))
      0.5

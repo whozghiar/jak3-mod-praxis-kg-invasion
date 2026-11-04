@@ -1,0 +1,911 @@
+;;-*-Lisp-*-
+(in-package goal)
+
+;; name: praxis-kg-invasion.gc
+;; name in dgo: praxis-kg-invasion
+;; dgos: GAME
+
+#|
+
+  praxis-kg-invasion.gc -- Praxis KG Invasion (GAME): Jak 2's Krimzon Guard invades Jak 3's city.
+
+  A Mods menu switch (*mod-praxis-kg-invasion*, off at every boot): in Jak 3's city, at any point of
+  the story, the faction praxis-kguard (Jak 2's red and yellow Krimzon Guards, and red jetpack
+  guards) fights the Freedom League's blue guards in the conflict zones chosen in the menu (every
+  district of the city by default: *mod-praxis-kg-invasion-zones*). In a zone the two sides are all
+  there is (no KG robot, Metal Head or Wastelander comes out), elsewhere Jak 3's city is as it is.
+  No ship flies, of either side. While the two sides fight near Jak, the city plays the music of
+  Jak 3's attack on the port (portattk) instead of its fight music (fight1). A Jak 3 mission in the
+  city sets its own factions and units: the invasion steps aside until it ends.
+
+  How: the guards and jetpack guards are Jak 3's own traffic units (`crimson-guard`, and
+  `flying-turret` for the jetpacks), drawn with Jak 2's models (build-actor, made by
+  scripts/praxis_kg_invasion/make_models.py: pki-kg-red, pki-kg-red-gl, pki-kg-yellow,
+  pki-kg-yellow-gl, pki-hover-red). Marked lines ("og:praxis-kg-invasion") in Jak 3's guard,
+  flying turret, traffic and faction code call the functions below, each of which gives back the
+  stock answer while the invasion is off. Jak 3's faction manager and traffic hold the zones through
+  three hooks: pki-permission (a zone's spawn permissions), pki-spawn-ok? (which traffic types come
+  out in a zone) and pki-wake-ok? (which of the pools' units, of which side, goes out on a street).
+  The city part (counts, hatreds, panic) is levels/city/war/pki-city.gc, linked with the traffic in
+  Jak 3's city (CWI).
+
+  Taken from the mod Haven City: New Dawn, where it was the war's second mode.
+
+|#
+
+;; DECOMP BEGINS
+
+;; Switch ////////////////////////////////////////////////////////////////////////////////////////
+
+;; The invasion, set by the Mods menu (below). Off at every boot.
+(define *mod-praxis-kg-invasion* #f)
+
+;; The conflict zones, one bit per district of Jak 3's city (PKI_ZONE_*), every one by default.
+(defconstant PKI_ZONE_PORT 0)     ;; port-ff-deep, port-ff-near-kg, port-ff-kg-border
+(defconstant PKI_ZONE_PORT_MH 1)  ;; port-ff-near-mh, port-ff-mh-border
+(defconstant PKI_ZONE_INDA 2)     ;; inda-kg-ff-border, inda-kg, inda-kg-deep
+(defconstant PKI_ZONE_INDB 3)     ;; indb-kg-deep, indb-kg, indb-kg-ff-border
+(defconstant PKI_ZONE_SLUMA 4)    ;; sluma-ff-kg-border, sluma-ff, sluma-ff-deep
+(defconstant PKI_ZONE_SLUMB 5)    ;; slumb-ff-deep
+(defconstant PKI_ZONE_SLUMC 6)    ;; slumc-ff-deep
+(defconstant PKI_ZONE_GENC 7)     ;; genc-border, genc
+(defconstant PKI_ZONE_MH 8)       ;; mhcity-mh-ff-border, mhcity-mh, mhcity-mh-deep
+(defconstant PKI_ZONE_ALL #x1ff)  ;; the nine districts
+(define *mod-praxis-kg-invasion-zones* PKI_ZONE_ALL)
+
+(deftype pki-state (structure)
+  "What the invasion knows of the game. mission?: a Jak 3 mission runs in Jak 3's city (a
+task-manager process), set by pki-update-mission!. where-time: the frame (the real clock's frame
+counter) city? was last found for (pki-where!); city?: Jak 3's city (ctywide) is active. awake-ff,
+awake-kg: the guards of each side out on the street, counted every half second (pki-count-looks!)."
+  ((mission?    symbol)
+   (where-time  time-frame)
+   (city?       symbol)
+   (awake-ff    int32)
+   (awake-kg    int32)
+   )
+  )
+
+(define *pki-state* (new 'static 'pki-state))
+
+(defun pki-where! ()
+  "Whether Jak 3's city (city?) is active, found once a frame (the hooks ask many times a frame, from
+small stacks). Returns nothing. Side effects: *pki-state*'s where-time and city?."
+  (let ((now (-> *display* real-clock frame-counter)))
+    (when (!= now (-> *pki-state* where-time))
+      (set! (-> *pki-state* where-time) now)
+      (let ((city (level-get *level* 'ctywide)))
+        (set! (-> *pki-state* city?) (the-as symbol (and city (= (-> city status) 'active))))
+        )
+      )
+    )
+  (none)
+  )
+
+(defun pki-on? ()
+  "#t while the invasion is on: switched on, Jak 3's city active, and no Jak 3 mission running there.
+Each hook of Jak 3's code asks this. No side effects but the frame's cache (pki-where!)."
+  (when *mod-praxis-kg-invasion*
+    (pki-where!)
+    (and (-> *pki-state* city?) (not (-> *pki-state* mission?)))
+    )
+  )
+
+(defun pki-zone ((territory int))
+  "The conflict zone (PKI_ZONE_*) of one of Jak 3's territories (nav-territory-type: a nav branch's
+clock-type), -1 for the special and invalid ones. No side effects."
+  (cond
+    ((< territory 0) -1)
+    ((< territory 3) PKI_ZONE_PORT)
+    ((< territory 6) PKI_ZONE_INDA)
+    ((< territory 9) PKI_ZONE_INDB)
+    ((< territory 12) PKI_ZONE_SLUMA)
+    ((= territory 12) PKI_ZONE_SLUMB)
+    ((= territory 13) PKI_ZONE_SLUMC)
+    ((< territory 16) PKI_ZONE_GENC)
+    ((< territory 18) PKI_ZONE_PORT_MH)
+    ((< territory 21) PKI_ZONE_MH)
+    (else -1)
+    )
+  )
+
+(defun pki-zone? ((territory int))
+  "#t when the invasion is on and territory (nav-territory-type) is in one of its conflict zones
+(*mod-praxis-kg-invasion-zones*). No side effects."
+  (let ((zone (pki-zone territory)))
+    (and (>= zone 0) (logtest? *mod-praxis-kg-invasion-zones* (ash 1 zone)) (pki-on?))
+    )
+  )
+
+(defun pki-update-mission! ()
+  "Set *pki-state* mission?: Jak 3's city is loaded and a task-manager process (a Jak 3 mission)
+runs. Walks the process tree: call it only from a process with a large stack (the director, the
+Mods menu), never from a unit's init. Returns nothing."
+  (set! (-> *pki-state* mission?)
+        (if (and (level-get *level* 'ctywide)
+                 (search-process-tree *active-pool* (lambda ((p process-tree)) (type? p task-manager)))
+                 )
+            #t
+            #f
+            )
+        )
+  (none)
+  )
+
+;; Commands of *pki-city-hook*, the city's part of the invasion (pki-city.gc).
+(defconstant PKI_CITY_CHANGED 0) ;; the invasion or its zones changed: rebuild the traffic
+
+;; Set by pki-city.gc each time CWI links: the function running a command in the city, #f before.
+;; Called only while the city's traffic exists.
+(define *pki-city-hook* (the-as (function int none) #f))
+
+;; below in this file
+(define-extern pki-reset-looks! (function none))
+
+(defun pki-changed! ()
+  "The invasion or its zones changed: Jak 3's city, if loaded, runs ctywide's activation again
+(*pki-city-hook*), so that its guards take the right looks (a guard's look is chosen when its
+process is made). Not during a Jak 3 mission: rebuilding the traffic there would kill its units
+without its own fail or reset; the looks then come with the city's next activation (a death, a
+return to the city). Returns nothing."
+  (pki-reset-looks!)
+  (pki-update-mission!)
+  (let ((city (level-get *level* 'ctywide)))
+    (if (and city (= (-> city status) 'active) *pki-city-hook* (not (-> *pki-state* mission?)))
+        (*pki-city-hook* PKI_CITY_CHANGED)
+        )
+    )
+  (none)
+  )
+
+(defun mod-praxis-kg-invasion-set ((on symbol))
+  "Switch the invasion on (on: #t) or off (#f) from the Mods menu; Jak 3's city, if loaded, follows
+at once. Returns nothing."
+  (set! *mod-praxis-kg-invasion* on)
+  (pki-changed!)
+  (none)
+  )
+
+(defun mod-praxis-kg-invasion-set-zones ((zones int))
+  "Set the conflict zones (one bit per PKI_ZONE_*) from the Mods menu; Jak 3's city, if loaded and the
+invasion on, follows at once. Returns nothing."
+  (set! *mod-praxis-kg-invasion-zones* zones)
+  (if *mod-praxis-kg-invasion*
+      (pki-changed!)
+      )
+  (none)
+  )
+
+;; Models ////////////////////////////////////////////////////////////////////////////////////////
+;;
+;; Jak 2's Krimzon Guard on Jak 3's guard skeleton and clips (make_models.py orders the clips like
+;; crimson-guard-ag: idle 4 ... shield-sidle 55), so Jak 3's crimson-guard code drives it unchanged.
+;; A build-actor model draws all its primitives: each weapon is its own model (rifle; grenade
+;; launcher and tazer). Yellow: Jak 2's dark guard armor. The art groups are in the levels whose
+;; processes draw them: Jak 3's CTYPESA (guards) and CTYPESC (jetpack guards); their meshes in those
+;; levels' .fr3 (task extract bakes custom_assets/jak3/models/ctypesa and ctypesc).
+
+(def-art-elt pki-kg-red-ag pki-kg-red-lod0-jg 0)
+(def-art-elt pki-kg-red-ag pki-kg-red-lod0-mg 1)
+(def-art-elt pki-kg-red-gl-ag pki-kg-red-gl-lod0-jg 0)
+(def-art-elt pki-kg-red-gl-ag pki-kg-red-gl-lod0-mg 1)
+(def-art-elt pki-kg-yellow-ag pki-kg-yellow-lod0-jg 0)
+(def-art-elt pki-kg-yellow-ag pki-kg-yellow-lod0-mg 1)
+(def-art-elt pki-kg-yellow-gl-ag pki-kg-yellow-gl-lod0-jg 0)
+(def-art-elt pki-kg-yellow-gl-ag pki-kg-yellow-gl-lod0-mg 1)
+
+(defskelgroup skel-pki-kg-red pki-kg-red pki-kg-red-lod0-jg -1
+              ((pki-kg-red-lod0-mg (meters 999999)))
+              :bounds (static-spherem 0 0 0 5)
+              :origin-joint-index 3
+              )
+
+(defskelgroup skel-pki-kg-red-gl pki-kg-red-gl pki-kg-red-gl-lod0-jg -1
+              ((pki-kg-red-gl-lod0-mg (meters 999999)))
+              :bounds (static-spherem 0 0 0 5)
+              :origin-joint-index 3
+              )
+
+(defskelgroup skel-pki-kg-yellow pki-kg-yellow pki-kg-yellow-lod0-jg -1
+              ((pki-kg-yellow-lod0-mg (meters 999999)))
+              :bounds (static-spherem 0 0 0 5)
+              :origin-joint-index 3
+              )
+
+(defskelgroup skel-pki-kg-yellow-gl pki-kg-yellow-gl pki-kg-yellow-gl-lod0-jg -1
+              ((pki-kg-yellow-gl-lod0-mg (meters 999999)))
+              :bounds (static-spherem 0 0 0 5)
+              :origin-joint-index 3
+              )
+
+;; Jak 2's jetpack guard, on the code of Jak 3's Krimzon Guard flying turret: make_models.py puts the
+;; three clips that code plays first (2 idle, 3 hover = fly-forward, 4 fire = shoot0).
+(def-art-elt pki-hover-red-ag pki-hover-red-lod0-jg 0)
+(def-art-elt pki-hover-red-ag pki-hover-red-lod0-mg 1)
+(def-art-elt pki-hover-red-ag pki-hover-red-idle-ja 2)
+
+(defskelgroup skel-pki-hover-red pki-hover-red pki-hover-red-lod0-jg pki-hover-red-idle-ja
+              ((pki-hover-red-lod0-mg (meters 999999)))
+              :bounds (static-spherem 0 0 0 4)
+              :origin-joint-index 3
+              )
+
+;; clips of the jetpack guard
+(defconstant PKI_HOVER_IDLE 2)
+(defconstant PKI_HOVER_FLY_FORWARD 3)
+(defconstant PKI_HOVER_SHOOT 4)
+
+;; Looks ////////////////////////////////////////////////////////////////////////////////////////
+;;
+;; A traffic unit's look is chosen when its process is made (the traffic keeps its processes in
+;; pools and wakes them again and again): each new guard takes the look furthest below its share of
+;; its pool (*pki-look-share*). The director counts the live looks every half second
+;; (pki-count-looks!, in its own process: a walk of the process tree on the traffic manager's small
+;; stack crashed the mod Battlefront).
+
+(defconstant PKI_LOOK_BLUE 0)       ;; Freedom League guard (Jak 3's crimson-guard art)
+(defconstant PKI_LOOK_RED 1)        ;; Krimzon Guard, rifle
+(defconstant PKI_LOOK_RED_GL 2)     ;; Krimzon Guard, grenade launcher / tazer
+(defconstant PKI_LOOK_YELLOW 3)     ;; Krimzon Guard dark guard, rifle
+(defconstant PKI_LOOK_YELLOW_GL 4)  ;; Krimzon Guard dark guard, grenade launcher / tazer
+(defconstant PKI_LOOK_JET_RED 5)    ;; Krimzon Guard jetpack guard
+(defconstant PKI_LOOK_COUNT 6)
+
+;; the sides
+(defconstant PKI_SIDE_NONE -1)
+(defconstant PKI_SIDE_FF 0)         ;; Freedom League (blue)
+(defconstant PKI_SIDE_KG 1)         ;; Krimzon Guard (red, yellow): the faction praxis-kguard
+
+;; The faction praxis-kguard in Jak 3's attack controller (cty-attack-controller.gc): a target type
+;; of its own. Jak 3 makes the controller for 17 types (initialize-cty-attack-controller, init! 64
+;; 17 22) and uses 0 to 12 (city-target-type); 13 is free. Its hatreds are the invasion's
+;; (pki-hatred-set!, pki-city.gc): it fights the Freedom League's guards and Jak and attacks the
+;; citizens; the KG robots and the Metal Heads leave it alone, as it leaves them.
+(defconstant PKI_TARGET_PRAXIS 13)
+
+;; Live units of each look, and each look's share of its pool. The guards' pool (traffic type guard-a,
+;; PKI_GUARDS) is half Freedom League, half Krimzon Guard, of which a third are yellow dark guards;
+;; the jetpack guard's share only counts it (pki-turret-skel-name picks it by pid).
+(define *pki-looks* (new 'static 'array int32 6 0 0 0 0 0 0))
+(define *pki-look-share* (new 'static 'array int32 6 10 4 3 2 1 2))
+
+;; the joint geometry (the model's skeleton, named <art group>-lod0) of each look, and its skeleton
+;; group. A look is told by its skeleton, not its art group: a Krimzon Guard plays the blue guard's
+;; clips, from crimson-guard-ag (pki-guard-clips).
+(define *pki-look-art* (new 'static 'boxed-array :type string
+  "crimson-guard-lod0" "pki-kg-red-lod0" "pki-kg-red-gl-lod0" "pki-kg-yellow-lod0" "pki-kg-yellow-gl-lod0"
+  "pki-hover-red-lod0"
+  ))
+(define *pki-look-skel* (new 'static 'boxed-array :type string
+  "skel-crimson-guard" "skel-pki-kg-red" "skel-pki-kg-red-gl" "skel-pki-kg-yellow" "skel-pki-kg-yellow-gl"
+  "skel-pki-hover-red"
+  ))
+
+(defun pki-art-name ((proc process))
+  "Name of the joint geometry (skeleton) proc draws, \"\" when it has no draw-control yet. No side
+effects."
+  (let ((pd (the-as process-drawable proc)))
+    (if (and (type? proc process-drawable) (nonzero? (-> pd draw)) (-> pd draw) (-> pd draw jgeo))
+        (-> pd draw jgeo name)
+        ""
+        )
+    )
+  )
+
+(defun pki-look ((proc process))
+  "The look (PKI_LOOK_*) of a guard or jetpack guard, -1 for anything else (a stock flying turret, a
+citizen...). No side effects."
+  (let ((name (pki-art-name proc))
+        (look -1)
+        )
+    (dotimes (i PKI_LOOK_COUNT)
+      (if (string= name (-> *pki-look-art* i))
+          (set! look i)
+          )
+      )
+    look
+    )
+  )
+
+(defun pki-guard-side ((proc process))
+  "The side of a unit: PKI_SIDE_FF for a Freedom League guard, PKI_SIDE_KG for a Krimzon Guard (red,
+yellow, red jetpack), PKI_SIDE_NONE for anything else. No side effects."
+  (case (pki-look proc)
+    ((PKI_LOOK_BLUE) PKI_SIDE_FF)
+    ((PKI_LOOK_RED PKI_LOOK_RED_GL PKI_LOOK_YELLOW PKI_LOOK_YELLOW_GL PKI_LOOK_JET_RED) PKI_SIDE_KG)
+    (else PKI_SIDE_NONE)
+    )
+  )
+
+(defun pki-pos-ok? ((pos vector))
+  "Is pos a place the invasion may center a danger on or measure from: no NaN in x, y or z. A guard's
+place can be NaN (Jak 3's own ff-squad-control-method-16 skips such guards: a sort on NaN never
+ended). No side effects."
+  (not (or (is-nan? (-> pos x)) (is-nan? (-> pos y)) (is-nan? (-> pos z))))
+  )
+
+(defun pki-kg? ((proc process))
+  "#t for a Krimzon Guard (red or yellow guard, red jetpack guard). No side effects."
+  (= (pki-guard-side proc) PKI_SIDE_KG)
+  )
+
+(defun pki-yellow? ((proc process))
+  "#t for a yellow Krimzon Guard (Jak 2's dark guard). No side effects."
+  (let ((look (pki-look proc)))
+    (or (= look PKI_LOOK_YELLOW) (= look PKI_LOOK_YELLOW_GL))
+    )
+  )
+
+(defun pki-guard? ((this process))
+  "#t for a guard of the invasion, either side, while it is on (a Freedom League guard keeps the stock
+look, so the switch tells it from a guard at peace). No side effects."
+  (and (pki-on?) (!= (pki-guard-side this) PKI_SIDE_NONE))
+  )
+
+(defun pki-hover? ((proc process))
+  "#t for a jetpack guard (a flying-turret drawn with the jetpack guard model). No side effects."
+  (= (pki-look proc) PKI_LOOK_JET_RED)
+  )
+
+(defun pki-reset-looks! ()
+  "No live unit of any look: the pools are about to be made again (invasion switched, traffic
+restarted). Returns nothing."
+  (dotimes (i PKI_LOOK_COUNT)
+    (set! (-> *pki-looks* i) 0)
+    )
+  (none)
+  )
+
+(defun pki-count-looks! ()
+  "Count the live guards and jetpack guards of each look into *pki-looks*, and the guards of each side
+out on the street. Called by the director in its own process (pki-city.gc), never from a unit's
+init. Returns nothing."
+  (dotimes (i PKI_LOOK_COUNT)
+    (set! (-> *pki-looks* i) 0)
+    )
+  (set! (-> *pki-state* awake-ff) 0)
+  (set! (-> *pki-state* awake-kg) 0)
+  (iterate-process-tree
+    *active-pool*
+    (lambda ((p process))
+      (let ((sym (-> p type symbol)))
+        (when (or (= sym 'crimson-guard) (= sym 'flying-turret))
+          (let ((look (pki-look p)))
+            (if (>= look 0)
+                (+! (-> *pki-looks* look) 1)
+                )
+            )
+          ;; a guard out on the street (the traffic keeps the others in its inactive state)
+          (when (and (= sym 'crimson-guard) (not (focus-test? (the-as process-focusable p) inactive dead)))
+            (if (= (pki-guard-side p) PKI_SIDE_KG)
+                (+! (-> *pki-state* awake-kg) 1)
+                (+! (-> *pki-state* awake-ff) 1)
+                )
+            )
+          )
+        )
+      #t
+      )
+    *null-kernel-context*
+    )
+  (none)
+  )
+
+(defun pki-look-has-art? ((lev level) (look int))
+  "Is the art group of look (a Krimzon Guard model, not the stock blue guard) in lev's own art, where
+a unit of lev looks it up? Reads the GAME skeleton group directly (a unit's init runs on a small
+stack). No side effects."
+  (let ((skel (case look
+                ((PKI_LOOK_RED) skel-pki-kg-red)
+                ((PKI_LOOK_RED_GL) skel-pki-kg-red-gl)
+                ((PKI_LOOK_YELLOW) skel-pki-kg-yellow)
+                ((PKI_LOOK_YELLOW_GL) skel-pki-kg-yellow-gl)
+                ((PKI_LOOK_JET_RED) skel-pki-hover-red)
+                (else (the-as skeleton-group #f))
+                )
+              )
+        )
+    (and skel
+         lev
+         (load-to-heap-by-name (-> lev art-group) (-> skel art-group-name) 'test global (-> skel version))
+         #t
+         )
+    )
+  )
+
+(defun pki-pick-look ((proc process-drawable) (first int) (last int))
+  "The look, between first and last (PKI_LOOK_*), a new unit proc takes: the one furthest below its
+share in proportion (the fewest live units for its share: count / share), whose art is in proc's
+level (first, the stock look, needs none), counted as live at once (a pool makes several units in
+one frame). By proportion, not by units missing: the pool's first units alternate the sides.
+Returns the look."
+  (let ((look first)
+        (lev (-> proc level))
+        (i (+ first 1))
+        )
+    (while (<= i last)
+      ;; count(i) / share(i) < count(look) / share(look), without a division
+      (if (and (< (* (-> *pki-looks* i) (-> *pki-look-share* look)) (* (-> *pki-looks* look) (-> *pki-look-share* i)))
+               (pki-look-has-art? lev i)
+               )
+          (set! look i)
+          )
+      (+! i 1)
+      )
+    (+! (-> *pki-looks* look) 1)
+    look
+    )
+  )
+
+;; Hooks of Jak 3's stock code ///////////////////////////////////////////////////////////////////
+;; Each is called by a line marked "og:praxis-kg-invasion" and answers like the stock code while the
+;; invasion is off.
+
+(defun pki-guard-skel-name ((this process-drawable))
+  "Skeleton group of a new crimson-guard process (guard.gc init-enemy!): \"skel-crimson-guard\", or
+during the invasion the look furthest below its share (blue, red, yellow; pki-pick-look)."
+  (if (pki-on?)
+      (-> *pki-look-skel* (pki-pick-look this PKI_LOOK_BLUE PKI_LOOK_YELLOW_GL))
+      "skel-crimson-guard"
+      )
+  )
+
+(defun pki-turret-skel-name ((this process-drawable))
+  "Skeleton group of a new flying-turret process (flying-turret.gc init-enemy!): \"skel-flying-turret\",
+or during the invasion, for one process in two (odd pid), a red jetpack guard: the conflict zones
+get the jetpack guards, the rest of the city keeps its turrets (pki-wake-ok?). The stock turret when
+the jetpack model isn't in the level."
+  (if (and (pki-on?) (logtest? (-> this pid) 1) (pki-look-has-art? (-> this level) PKI_LOOK_JET_RED))
+      (-> *pki-look-skel* PKI_LOOK_JET_RED)
+      "skel-flying-turret"
+      )
+  )
+
+(defun pki-guard-clips ((this process-drawable))
+  "Called by crimson-guard init-enemy! (guard.gc) right after its skeleton is set up: a red or
+yellow Krimzon Guard plays the blue guard's clips. Its model is Jak 2's on Jak 3's 41-joint guard
+skeleton (the same joints and bind pose), so its draw takes crimson-guard-ag, when that art group is
+in its level, as the art group its clips (and their sound and death effects) are looked up in; its
+own meshes stay. The blue guard's clips run at the blue guard's pace, where the model's own clips
+(build-actor, 15 frames a second) ran too fast. Those effects need an effect-control, which a
+process only gets when its model has an effect-name lump (effect-control's new), and the Krimzon
+Guard models (build-actor) have none: without it they made no step or gun sound and skipped the
+blue guard's death effect (death-default), vanishing at once. It gets one, made like
+effect-control's new does. Returns nothing. Side effects: the draw-control's art-group, the
+skeleton's effect-control (process heap)."
+  (when (and (pki-kg? this) (-> this level))
+    (let ((ag (load-to-heap-by-name (-> this level art-group) "crimson-guard" 'test global 0)))
+      (when (and ag
+                 (= (-> ag type) art-group)
+                 (= (-> (the-as art-joint-geo (-> ag data 0)) length) (-> this draw jgeo length))
+                 )
+        (set! (-> this draw art-group) ag)
+        (when (not (-> this skel effect))
+          (let ((ec (the-as effect-control ((method-of-type object new) 'process effect-control (the-as int (-> effect-control size))))))
+            (set! (-> ec process) this)
+            (set! (-> ec last-frame-group) #f)
+            (set! (-> this skel effect) ec)
+            )
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+(defun pki-guard-type ((this process) (stock int))
+  "Called by crimson-guard-method-267 (guard.gc) whenever a guard is given a weapon (guard-type: 0
+tazer, 1 rifle, 2 grenade launcher). During the invasion no guard uses the tazer: a Krimzon Guard
+takes the weapon its model holds, the rifle (red, yellow) or the grenade launcher (red-gl,
+yellow-gl); a Freedom League guard keeps a rifle or launcher the squad gives it, and trades anything
+else for a rifle, or for a launcher one time in three (by its pid, so the same guard keeps the same
+weapon). Out of the invasion every guard keeps stock. Returns the guard type."
+  (case (pki-look this)
+    ((PKI_LOOK_RED PKI_LOOK_YELLOW) (the-as int (guard-type rifle)))
+    ((PKI_LOOK_RED_GL PKI_LOOK_YELLOW_GL) (the-as int (guard-type grenade)))
+    ((PKI_LOOK_BLUE)
+     (cond
+       ((or (not (pki-on?)) (= stock (the-as int (guard-type rifle))) (= stock (the-as int (guard-type grenade))))
+        stock
+        )
+       ((zero? (mod (-> this pid) 3))
+        (the-as int (guard-type grenade))
+        )
+       (else
+         (the-as int (guard-type rifle))
+         )
+       )
+     )
+    (else stock)
+    )
+  )
+
+(defun pki-melee-ok? ((this process-drawable))
+  "Called by guard-rifle.gc gun-shoot, guard-grenade.gc grenade-throw-post-retreating and
+guard-states.gc (the hostile check of a target in reach) before a guard goes to its rifle butt
+(close-attack) on a close target. During the invasion a guard keeps its rifle butt for Jak: it
+strikes only when Jak is the target it holds (focus); against another guard or a citizen it keeps
+shooting or backing away. #t out of the invasion. No side effects."
+  (or (not (pki-guard? this)) (= (handle->process (-> (the-as enemy this) focus handle)) *target*))
+  )
+
+(defun pki-reload-break-ok? ((this process-drawable))
+  "Called by guard-grenade.gc grenade-throw-post-reloading's trans before a grenade guard breaks off
+its reload because its target came close. A guard of the invasion breaks it off only for Jak:
+against another guard it finishes reloading. With a guard as its target, standing within half its
+keep-away distance, the guard looped within one frame: the reload broke off to back away, 2 s of
+backing away already spent sent it back to its grenade state, which, with no grenade and the guard
+at its spot, sent it to reload again, each step a `go` from a state's trans running the next state's
+trans at once, a new reload grenade spawned each time, until the stack overflowed and the game
+crashed. #t out of the invasion. No side effects."
+  (or (not (pki-guard? this)) (= (handle->process (-> (the-as enemy this) focus handle)) *target*))
+  )
+
+(defun pki-hover-nozzle! ((this process-drawable) (pos vector) (dir vector) (side int))
+  "Called by flying-turret-method-229 (flying-turret.gc) before each of its two thruster flames: a
+jetpack guard's flame comes out of Jak 2's nozzle, node-list joint 15 (side 0, Jak 2's engine-left)
+or 17 (side 1, engine-right), not the turret's spots under its root. pos: set to the joint's place;
+dir: to its -z axis, the way Jak 2's flame runs. Returns #t when it set them, #f (both unchanged)
+for a stock flying turret."
+  (cond
+    ((pki-hover? this)
+     (let ((joint (-> this node-list data (if (zero? side) 15 17))))
+       (vector<-cspace! pos joint)
+       (vector-normalize-copy! dir (-> joint bone transform vector 2) -1.0)
+       )
+     #t
+     )
+    (else
+      #f
+      )
+    )
+  )
+
+(defun pki-unit-scale ((proc process) (stock float))
+  "Root scale of a flying-turret (flying-turret.gc init-enemy!): the turret is drawn at stock (2.0), a
+jetpack guard at its own size (1.0)."
+  (if (pki-hover? proc) 1.0 stock)
+  )
+
+(defun pki-attacker-type ((proc process) (stock int))
+  "City attack-controller type (city-target-type) a unit registers with (guard.gc, flying-turret.gc):
+a Krimzon Guard or a red jetpack guard as the faction praxis-kguard (PKI_TARGET_PRAXIS); the
+invasion's hatreds (pki-hatred-set!) send each side against the other. Stock otherwise."
+  (if (pki-kg? proc) PKI_TARGET_PRAXIS stock)
+  )
+
+(defun pki-guard-flags ((this process) (flags uint) (dark uint))
+  "Called by crimson-guard citizen-method-194 (guard.gc) as a guard is put on the street, before
+Jak 3 reads its dark-guard flag. flags: the guard's citizen flags, dark: the dark-guard bit (the
+citizen-flag enum is CWI's, unknown here). A yellow Krimzon Guard is a dark guard (Jak 2's: twice
+the hit points, 1.1 times the size), a red one never; other guards keep the traffic's flag. Returns
+the flags to set."
+  (cond
+    ((pki-yellow? this) (logior flags dark))
+    ((pki-kg? this) (logclear flags dark))
+    (else flags)
+    )
+  )
+
+(defun pki-guard-activated ((this process))
+  "Tail of crimson-guard citizen-method-194 (guard.gc), each time a guard is put on the street: a
+Krimzon Guard gets the enemy process mask back (Jak's aim and lock-on only consider processes with
+it), which Jak 3's guards drop. The guard counts at once among its side's guards out (*pki-state*
+awake-ff, awake-kg, which the director recounts every half second): a burst of wakes then
+alternates the sides (pki-wake-ok?). Returns nothing."
+  (cond
+    ((pki-kg? this)
+     (logior! (-> this mask) (process-mask enemy))
+     (+! (-> *pki-state* awake-kg) 1)
+     )
+    (else
+      (+! (-> *pki-state* awake-ff) 1)
+      )
+    )
+  (none)
+  )
+
+(defun pki-hover-hatred ((this process) (other process))
+  "How much a jetpack guard hates other (kg-squad-member.gc enemy->hatred-val, which otherwise hates
+every process with the guard mask, red guards included): a Freedom League guard 0.5, a Krimzon
+Guard -1 (never), Jak 0.3; anything else -1. No side effects."
+  (let ((theirs (pki-guard-side other)))
+    (cond
+      ((>= theirs 0) (if (= theirs PKI_SIDE_KG) -1.0 0.5))
+      ((= (-> other type) target) 0.3)
+      (else -1.0)
+      )
+    )
+  )
+
+(defun pki-hover-animate ((this process-drawable) (speed float))
+  "Called by flying-turret enemy-common-post (flying-turret.gc): a jetpack guard loops its idle or
+forward-flight clip by its speed (units per second); the turret code only holds its idle pose. The
+firing clip, when the turret code plays it, is left alone. Returns nothing."
+  (when (and (pki-hover? this) (nonzero? (-> this skel)) (> (-> this skel active-channels) 0))
+    (let ((chan (-> this skel root-channel 0))
+          (fire (the-as art-joint-anim (-> this draw art-group data PKI_HOVER_SHOOT)))
+          )
+      ;; the firing clip is left alone while it plays (the turret code's fire state); once it ended
+      ;; (the turret code sets no other clip after it) the loop takes over again
+      (when (or (!= (-> chan frame-group) fire) (>= (-> chan frame-num) (the float (+ (-> fire frames num-frames) -1))))
+        (let ((want (the-as art-joint-anim
+                            (-> this draw art-group data (if (< speed (meters 4)) PKI_HOVER_IDLE PKI_HOVER_FLY_FORWARD))
+                            )
+                    )
+              )
+          (when (!= (-> chan frame-group) want)
+            (joint-control-channel-group! chan want num-func-identity)
+            (set! (-> chan frame-num) 0.0)
+            )
+          (let ((last (the float (+ (-> want frames num-frames) -1))))
+            (set! (-> chan frame-num) (+ (-> chan frame-num) (* 0.5 (-> this clock time-adjust-ratio))))
+            (if (>= (-> chan frame-num) last)
+                (set! (-> chan frame-num) 0.0)
+                )
+            )
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+;; The blue guard's death: its die clip calls the "death-default" effect (merc-death.gc), which
+;; switches its model to the generic renderer while its death timer runs: the mesh is hidden after 4
+;; frames, and each frame one vertex in 10 to 20 launches part 53, a purple spark drifting away for
+;; 1.7 s. The Krimzon Guard models are custom models (build-actor), which the generic renderer can't
+;; draw: switched to it by the death timer, the game crashed. Their death timer is cleared as it is
+;; set, and their cloud is launched from their joints instead (pki-death-fx), PKI_DEATH_SPARKS
+;; sparks by each joint a frame, scattered by up to 30 cm, for 15 frames. Part 53 has no texture of
+;; its own: merc-death-spawn launches it with the death texture, as the generic renderer does.
+(defconstant PKI_DEATH_PART 53)
+(defconstant PKI_DEATH_FRAMES 15)
+(defconstant PKI_DEATH_SPARKS 1)
+
+(defun pki-death-sparks ((pd process-drawable))
+  "One frame of the Krimzon Guard death cloud: PKI_DEATH_SPARKS death sparks (part 53, through
+merc-death-spawn) by each joint of pd, scattered by up to 30 cm. Returns nothing."
+  (let ((pos (new 'stack-no-clear 'vector)))
+    (dotimes (i (-> pd node-list length))
+      (dotimes (k PKI_DEATH_SPARKS)
+        (vector<-cspace! pos (-> pd node-list data i))
+        (+! (-> pos x) (rand-vu-float-range -1228.8 1228.8))
+        (+! (-> pos y) (rand-vu-float-range -1228.8 1228.8))
+        (+! (-> pos z) (rand-vu-float-range -1228.8 1228.8))
+        (merc-death-spawn PKI_DEATH_PART pos pos)
+        )
+      )
+    )
+  (none)
+  )
+
+(defbehavior pki-death-fx process ((h handle))
+  "Code of the process pki-death-start makes: PKI_DEATH_FRAMES frames of death sparks from the dying
+model's joints (pki-death-sparks), the model hidden from the fourth on, as the generic renderer does
+the blue guard's; stops early if the model's process is gone. Then exits."
+  (dotimes (frame PKI_DEATH_FRAMES)
+    (let ((pd (the-as process-drawable (handle->process h))))
+      (when pd
+        (pki-death-sparks pd)
+        (if (>= frame 4)
+            (logior! (-> pd draw status) (draw-control-status no-draw))
+            )
+        )
+      )
+    (suspend)
+    )
+  (none)
+  )
+
+(defun pki-death-start ((this process-drawable))
+  "Called by the enemy event handler on 'death-start (enemy.gc: the death-default effect just set the
+draw's death timer): for a Krimzon Guard model, the death timer cleared before the frame is drawn
+(the generic renderer it would switch the model to can't draw a custom model) and a small process
+that gives it the blue guard's death cloud (pki-death-fx). Returns nothing."
+  (when (pki-kg? this)
+    (set! (-> this draw death-timer) (the-as uint 0))
+    (process-spawn-function process pki-death-fx (process->handle this) :name "pki-death-fx" :to *default-pool*)
+    )
+  (none)
+  )
+
+(defun pki-shuffle-rate ((this process-drawable) (speed float))
+  "Called by citizen-travel-anim (citizen.gc) for a guard in its shuffle mode (entered under 1m/s,
+kept while it edges on), where Jak 3 plays the shuffle at a fixed pace of 1.0: its legs walk at 3m/s
+whatever its speed. A guard of the invasion (either side), whose rifle or grenade launcher keeps it
+edging between spots at 1 to 3m/s (Jak 3's tazer guards run), steps at the pace of the ground it
+covers (speed, units per second, over the walk clip's 3m a cycle, as citizen-travel-anim times its
+walk), 0.25 at least as it turns on the spot; anyone else 1.0 (the citizens go through this too). No
+side effects."
+  (if (pki-guard? this)
+      (fmax 0.25 (/ (/ (* 16.0 speed) (* 15.0 (meters 3))) (-> this root scale x)))
+      1.0
+      )
+  )
+
+(defun pki-reload-speed ((this process) (stock float))
+  "Called by guard-grenade.gc grenade-throw-post-reloading: the speed of the reload clips (stock: Jak
+3's). A grenade guard has one grenade out of a mission, and stands to reload it after each throw and
+at each spot it reaches (the reload clip, then the cocking clip at half speed: 3 s). A guard of the
+invasion (either side) reloads twice as fast, back on its feet sooner. No side effects."
+  (if (pki-guard? this)
+      (* 2.0 stock)
+      stock
+      )
+  )
+
+;; Unit counts and zones /////////////////////////////////////////////////////////////////////////
+
+(defun pki-cell-dist ((kind int) (stock float))
+  "Called by per-frame-cell-update (traffic-util.gc): the traffic wakes the citizens and guards of a
+street cell (its sphere) within 120 m of the camera, and keeps them off screen within 20 m only.
+kind 1 is the first distance, kind 0 the second; stock is Jak 3's. During the invasion guards come
+from 180 m and stay off screen within 80 m: they arrive from further away and don't vanish when the
+camera turns. No side effects."
+  (cond
+    ((not (pki-on?)) stock)
+    ((= kind 1) (meters 180))
+    (else (meters 80))
+    )
+  )
+
+;; The invasion's pools in Jak 3's city: the guards' (half Freedom League, half Krimzon Guard,
+;; *pki-look-share*) and the flying turrets' (half red jetpack guards). Outside the conflict zones
+;; only the Freedom League's guards and the stock turrets go out (pki-wake-ok?).
+(defconstant PKI_GUARDS 20)
+(defconstant PKI_TURRETS 4)
+
+(defun pki-want-count ((kind int) (stock int))
+  "How many units of traffic type kind the city keeps (traffic-manager.gc traffic-manager-method-22,
+from the faction manager's spawn levels, and traffic-engine.gc activate-one-vehicle): stock while
+the invasion is off. During the invasion: pools for both sides' guards and the jetpack guards, and
+no guard vehicle (no Freedom League ship flies, nor any of Praxis's); the rest stock, which the
+conflict zones keep out of them (pki-spawn-ok?)."
+  (if (pki-on?)
+      (case (the-as traffic-type kind)
+        (((traffic-type guard-a)) (max stock PKI_GUARDS))
+        (((traffic-type flying-turret)) (max stock PKI_TURRETS))
+        (((traffic-type guard-bike) (traffic-type guard-car) (traffic-type guard-transport)) 0)
+        (else stock)
+        )
+      stock
+      )
+  )
+
+(defun pki-spawn-ok? ((kind int) (territory int))
+  "Called by traffic-engine.gc activate-one-vehicle (which picks the type to send out next) and
+activate-by-type, before Jak 3's faction check: may a unit of traffic type kind go out on a street of
+territory (nav-territory-type)? In a conflict zone only the two sides' guards (guard-a), the jetpack
+guards (flying-turret) and the citizens: no KG robot, spydroid, Metal Head nor Wastelander. #t
+everywhere else, and while the invasion is off. No side effects."
+  (or (not (pki-zone? territory))
+      (case (the-as traffic-type kind)
+        (((traffic-type roboguard)
+          (traffic-type spydroid)
+          (traffic-type metalhead-grunt)
+          (traffic-type metalhead-flitter)
+          (traffic-type metalhead-predator)
+          (traffic-type wlander-male)
+          (traffic-type wlander-female)
+          (traffic-type kg-pickup)
+          )
+         #f
+         )
+        (else #t)
+        )
+      )
+  )
+
+(defun pki-wake-ok? ((proc process) (kind int) (territory int) (first? symbol))
+  "Called by traffic-engine.gc pki-get-from-inactive for each sleeping unit of traffic type kind the
+traffic could send out on a street of territory (nav-territory-type, -1: none known): may proc go
+out there? It asks twice: first (first? #t) for the unit it would rather send, then for any unit
+allowed. During the invasion the pools hold both sides (pki-guard-skel-name, pki-turret-skel-name):
+a guard of either side in a conflict zone (pki-zone?), first the side with fewer guards out
+(awake-ff, awake-kg), only a Freedom League guard elsewhere; a jetpack guard in a zone, only a stock
+flying turret elsewhere. #t for any other unit, street or time. No side effects."
+  (cond
+    ((or (not proc) (< territory 0) (not (pki-on?)))
+     #t
+     )
+    ((= kind (the-as int (traffic-type guard-a)))
+     (cond
+       ((not (pki-zone? territory))
+        (= (pki-guard-side proc) PKI_SIDE_FF)
+        )
+       (first?
+         (= (pki-guard-side proc) (if (<= (-> *pki-state* awake-kg) (-> *pki-state* awake-ff)) PKI_SIDE_KG PKI_SIDE_FF))
+         )
+       (else
+         #t
+         )
+       )
+     )
+    ((= kind (the-as int (traffic-type flying-turret)))
+     (= (pki-zone? territory) (pki-hover? proc))
+     )
+    (else
+      #t
+      )
+    )
+  )
+
+(defun pki-permission ((territory int) (slot int))
+  "Called first by cty-faction.gc cty-faction-manager-method-14, Jak 3's spawn permission of a faction
+slot (cty-faction-info: 0 ff-guard, 1 ff-ped, 2 kg-guard, 3 kg-ped, 4 mh-guard, 5 mh-ped) in a
+territory (nav-territory-type): in a conflict zone, the Freedom League's guards and the Krimzon
+Guard's slot are allowed (3: their borrow levels load, CTYPESA with both sides' guards, CTYPESC with
+the jetpack guards; pki-spawn-ok? keeps the KG robots out), the KG's pedestrians and the Metal Heads
+are not (0); the citizens keep Jak 3's answer. -1 (Jak 3's answer) everywhere else. No side
+effects."
+  (if (pki-zone? territory)
+      (case slot
+        ((0 2) 3)
+        ((3 4 5) 0)
+        (else -1)
+        )
+      -1
+      )
+  )
+
+(defun pki-fight-music ((stock symbol))
+  "Called by cty-faction.gc as a fight near Jak starts its music (stock: Jak 3's fight1): during the
+invasion, the music of Jak 3's attack on the port (portattk, the blackout mission's), else stock. No
+side effects."
+  (if (pki-on?) 'portattk stock)
+  )
+
+;; Mods menu /////////////////////////////////////////////////////////////////////////////////////
+
+(defmacro mod-praxis-kg-invasion-zone-flag (label zone)
+  "A Mods menu choice of a conflict zone (PKI_ZONE_*): checked while the zone is one, a confirm makes
+it one or no longer one."
+  `(new 'static 'popup-menu-flag :label ,label
+        :is-toggled? (lambda () (logtest? *mod-praxis-kg-invasion-zones* (ash 1 ,zone)))
+        :on-confirm (lambda ()
+                      (mod-praxis-kg-invasion-set-zones (logxor *mod-praxis-kg-invasion-zones* (ash 1 ,zone)))
+                      (none)
+                      )
+        )
+  )
+
+(define *mod-praxis-kg-invasion-menu*
+  (new 'static 'popup-menu-submenu :label "Praxis KG Invasion"
+    :entries (new 'static 'boxed-array :type popup-menu-entry
+      (new 'static 'popup-menu-flag :label "Invasion on (Jak 3's city)"
+           :is-toggled? (lambda () *mod-praxis-kg-invasion*)
+           :on-confirm (lambda () (mod-praxis-kg-invasion-set (not *mod-praxis-kg-invasion*)) (none))
+           )
+      (new 'static 'popup-menu-submenu :label "Conflict zones"
+        :entries (new 'static 'boxed-array :type popup-menu-entry
+          ;; every district at once, or none
+          (new 'static 'popup-menu-flag :label "Whole city"
+               :is-toggled? (lambda () (= *mod-praxis-kg-invasion-zones* PKI_ZONE_ALL))
+               :on-confirm (lambda ()
+                             (mod-praxis-kg-invasion-set-zones (if (= *mod-praxis-kg-invasion-zones* PKI_ZONE_ALL) 0 PKI_ZONE_ALL))
+                             (none)
+                             )
+               )
+          (mod-praxis-kg-invasion-zone-flag "Port" 0)
+          (mod-praxis-kg-invasion-zone-flag "Port, Metal Head border" 1)
+          (mod-praxis-kg-invasion-zone-flag "Industrial Section A" 2)
+          (mod-praxis-kg-invasion-zone-flag "Industrial Section B" 3)
+          (mod-praxis-kg-invasion-zone-flag "Slums A" 4)
+          (mod-praxis-kg-invasion-zone-flag "Slums B" 5)
+          (mod-praxis-kg-invasion-zone-flag "Slums C" 6)
+          (mod-praxis-kg-invasion-zone-flag "Genc" 7)
+          (mod-praxis-kg-invasion-zone-flag "Metal Head city" 8)
+          )
+        )
+      )
+    )
+  )
+
+(defun mod-praxis-kg-invasion-build-menu ()
+  "The mod's entry of the Mods menu (mods-menu.gc), rebuilt each time the menu opens. Returns the
+static submenu."
+  (the-as popup-menu-entry *mod-praxis-kg-invasion-menu*)
+  )
+
+(mods-menu-register "praxis-kg-invasion" mod-praxis-kg-invasion-build-menu)

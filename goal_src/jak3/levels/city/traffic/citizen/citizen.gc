@@ -5,6 +5,9 @@
 ;; name in dgo: citizen
 ;; dgos: DESRESC, WWD, CWI
 
+;; og:praxis-kg-invasion added: the invasion's shuffle pace (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-shuffle-rate (function process-drawable float float))
+
 ;; DECOMP BEGINS
 
 (define *citizen-debug* #f)
@@ -922,7 +925,8 @@
              (f0-25 (/ (/ (* 16.0 f30-0) (* 15.0 f0-22)) (-> self root scale x)))
              )
         (if (logtest? (-> self flags) (citizen-flag shuffle-mode))
-            (set! f0-25 1.0)
+            ;; og:praxis-kg-invasion added the hook (pki-shuffle-rate): 1.0, but for a guard of the invasion
+            (set! f0-25 (pki-shuffle-rate self f30-0))
             )
         (let ((f0-26 (* f0-25 (-> self travel-anim-scale-speed))))
           (ja :num! (loop! f0-26))

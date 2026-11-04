@@ -490,4 +490,5 @@
   "debris.o"
   "shield-sphere.o"
   "entity-debug.o" ;; added
+  "praxis-kg-invasion.o" ;; added -- og:praxis-kg-invasion switch, zones, looks of Jak 2's guards, hooks of the city's traffic, Mods menu entry
  ))

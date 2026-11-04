@@ -1,0 +1,375 @@
+;;-*-Lisp-*-
+(in-package goal)
+
+;; name: pki-city.gc
+;; name in dgo: pki-city
+;; dgos: CWI
+
+#|
+
+  The city's part of Praxis KG Invasion (pc/features/praxis-kg-invasion.gc, GAME). Linked after the
+  traffic code in Jak 3's city (goal_src/jak3/dgos/cwi.gd, an added line), so it only exists while
+  the city is loaded.
+
+  While the invasion is switched on, a director process, child of the traffic manager (it dies with
+  the traffic), every frame:
+  - tells every half second whether a Jak 3 mission runs (the invasion then steps aside);
+  - counts the live looks of the guards and jetpack guards (the shares of praxis-kg-invasion.gc);
+  - frightens the citizens: every citizen on foot keeps fleeing from the nearest guard (or Jak), and a
+    danger sphere on a Krimzon Guard near Jak keeps new ones from walking in (the traffic engine's
+    'panic);
+  - adds the invasion's hatreds to the attack controller: the two sides seek each other out from
+    further away, and the Krimzon Guards attack citizens too.
+  The conflict zones are held by the faction manager's and the traffic's hooks (pki-permission,
+  pki-spawn-ok?, pki-wake-ok?), the fight music by cty-faction.gc's (pki-fight-music).
+
+  Switching the invasion or a zone rebuilds the city's traffic (a guard's look is chosen when its
+  process is made) by running ctywide's activation again, as a death does (*pki-city-hook*).
+
+|#
+
+;; DECOMP BEGINS
+
+(deftype pki-city-state (structure)
+  "The director's handle, in a structure: a handle kept in a global symbol loses its pid (GOAL wiki
+common 1.4.17)."
+  ((director  handle)
+   )
+  )
+
+(define *pki-city* (new 'static 'pki-city-state))
+
+(set! (-> *pki-city* director) (the-as handle #f))
+
+;; the citizens' panic: around a Krimzon Guard this close to Jak, a danger sphere of this radius whose
+;; alarm reaches this far
+(defconstant PKI_PANIC_RANGE (meters 80))
+(defconstant PKI_PANIC_RADIUS (meters 15))
+(defconstant PKI_PANIC_NOTIFY (meters 40))
+
+;; Hatred ////////////////////////////////////////////////////////////////////////////////////////
+;; Jak 3's attack controller gives each fighter its target from a table of hatreds between types
+;; (city-target-type: Jak 0, civilian 1, guards 3 to 5 by weapon, KG robots 9; the faction
+;; praxis-kguard 13, PKI_TARGET_PRAXIS, which the Krimzon Guards and red jetpack guards register
+;; as, pki-attacker-type). An entry weighs a pair by its hatred, full up to hatred-dist,
+;; dist-scale times at that distance, none past max-consider-dist (mission-squad-control-method-13).
+;; Jak 3's table (init-attack-controller, cty-attack-controller.gc) has nothing for type 13. The
+;; invasion adds three entries: the Freedom League's guards and praxis-kguard hate each other most
+;; (0.9, full up to 100 m, up to 160 m); praxis-kguard hates the citizens 0.7, full up to 10 m, a
+;; quarter at 60 m, up to 100 m (a citizen near a Krimzon Guard is shot before a guard further
+;; away); and Jak 0.6, as Jak 3's KG robots do. The KG robots and the Metal Heads have no entry
+;; towards it, nor it towards them.
+
+;; the table's length with the invasion's 3 entries (Jak 3's 11 and the empty entry 0, then 3)
+(defconstant PKI_HATRED_COUNT 15)
+
+(defun pki-hatred-set! ((on symbol))
+  "Jak 3's hatred table again (reset-hatred, init-attack-controller), and with on the invasion's
+entries on top (see above). Returns nothing. Side effect: *cty-attack-controller*'s table."
+  (let ((ctrl *cty-attack-controller*))
+    (when (and ctrl (nonzero? ctrl))
+      (reset-hatred ctrl)
+      (init-attack-controller ctrl)
+      (when on
+        (let ((fight (push-back-hatred ctrl)))
+          (set! (-> fight hatred) 0.9)
+          (set! (-> fight hatred-dist) (meters 100))
+          (set! (-> fight dist-scale) 0.5)
+          (set! (-> fight attacker-scale) 0.01)
+          (set! (-> fight max-consider-dist) (meters 160))
+          (dotimes (guard 3)
+            (set-hatred-indices ctrl fight (+ guard 3) PKI_TARGET_PRAXIS)
+            (set-hatred-indices ctrl fight PKI_TARGET_PRAXIS (+ guard 3))
+            )
+          )
+        (let ((civ (push-back-hatred ctrl)))
+          (set! (-> civ hatred) 0.7)
+          (set! (-> civ hatred-dist) (meters 60))
+          (set! (-> civ dist-scale) 0.25)
+          (set! (-> civ attacker-scale) 0.01)
+          (set! (-> civ max-consider-dist) (meters 100))
+          (set-hatred-indices ctrl civ PKI_TARGET_PRAXIS 1)
+          )
+        ;; Jak, as Jak 3's KG robots (its own entry 0.6: 60 m full, up to 100 m)
+        (let ((jak (push-back-hatred ctrl)))
+          (set! (-> jak hatred) 0.6)
+          (set! (-> jak hatred-dist) (meters 60))
+          (set! (-> jak dist-scale) 0.5)
+          (set! (-> jak attacker-scale) 0.01)
+          (set! (-> jak max-consider-dist) (meters 100))
+          (set-hatred-indices ctrl jak PKI_TARGET_PRAXIS 0)
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+;; The director //////////////////////////////////////////////////////////////////////////////////
+;;   count-time, mission-time, panic-time: the last looks count, mission check, danger sphere.
+;;   hatred?: the invasion's hatred entries are in the table.
+(deftype pki-director (process)
+  ((count-time    time-frame)
+   (mission-time  time-frame)
+   (panic-time    time-frame)
+   (hatred?       symbol)
+   )
+  (:state-methods
+    active
+    )
+  )
+
+
+(defun pki-panic ()
+  "Frighten the citizens near the fighting: a danger sphere (Jak 3's traffic engine add-danger, level
+1: 'panic, they flee) on one Krimzon Guard picked at random among those within PKI_PANIC_RANGE of
+Jak. The traffic engine also keeps citizens from spawning in it for a few seconds. Guards ignore
+this danger type. Returns nothing."
+  (let ((te *traffic-engine*)
+        (picked (the-as process-drawable #f))
+        (n 0)
+        )
+    (when (and te *target*)
+      (let ((trk (-> te tracker1)))
+        (dotimes (i (the-as int (-> trk active-object-count)))
+          (when (= (-> trk active-object-type-list i) (traffic-type guard-a))
+            (let ((g (the-as process-drawable (handle->process (-> trk active-object-list i)))))
+              (when (and g
+                         (pki-kg? g)
+                         (pki-pos-ok? (-> g root trans))
+                         (< (vector-vector-distance (-> g root trans) (target-pos 0)) PKI_PANIC_RANGE)
+                         )
+                ;; one at random: the n-th candidate replaces the pick with a chance of 1 in n
+                (+! n 1)
+                (if (zero? (rand-vu-int-count n))
+                    (set! picked g)
+                    )
+                )
+              )
+            )
+          )
+        )
+      (when picked
+        (let ((d (new 'stack-no-clear 'traffic-danger-info)))
+          (set! (-> d sphere quad) (-> picked root trans quad))
+          (set! (-> d sphere r) PKI_PANIC_RADIUS)
+          (vector-reset! (-> d velocity))
+          (set! (-> d handle) (the-as handle #f))
+          (set! (-> d notify-radius) PKI_PANIC_NOTIFY)
+          (set! (-> d danger-level) 1.0)
+          (set! (-> d decay-rate) 0.0)
+          (set! (-> d flags) (the-as uint 1))
+          (set! (-> d danger-type) (the-as uint 0))
+          (add-danger te d)
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+(defun pki-scare-civilians ()
+  "Keep every citizen on foot fleeing (the city is at war): each one active in the traffic gets the
+traffic engine's 'panic (civilian.gc: it flees from the danger's place, when walking, waiting or
+stepping aside), the danger centered on the nearest guard of the invasion within PKI_PANIC_RANGE,
+else on Jak. Returns nothing."
+  (let ((te *traffic-engine*))
+    (when (and te *target*)
+      (let ((trk (-> te tracker1))
+            (d (new 'stack-no-clear 'traffic-danger-info))
+            )
+        (vector-reset! (-> d velocity))
+        (set! (-> d handle) (the-as handle #f))
+        (set! (-> d notify-radius) PKI_PANIC_NOTIFY)
+        (set! (-> d danger-level) 1.0)
+        (set! (-> d decay-rate) 0.0)
+        (set! (-> d flags) (the-as uint 1))
+        (set! (-> d danger-type) (the-as uint 0))
+        (dotimes (i (the-as int (-> trk active-object-count)))
+          ;; civilian-male, civilian-female, civilian-fat
+          (when (< (the-as int (-> trk active-object-type-list i)) (the-as int (traffic-type civilian-pilot)))
+            (let ((civ (the-as process-drawable (handle->process (-> trk active-object-list i)))))
+              (when civ
+                ;; the nearest guard of the invasion, else Jak
+                (let ((best (the-as process-drawable #f))
+                      (best-d PKI_PANIC_RANGE)
+                      )
+                  (dotimes (j (the-as int (-> trk active-object-count)))
+                    (when (= (-> trk active-object-type-list j) (traffic-type guard-a))
+                      (let ((g (the-as process-drawable (handle->process (-> trk active-object-list j)))))
+                        (when (and g (pki-pos-ok? (-> g root trans)))
+                          (let ((dist (vector-vector-distance (-> g root trans) (-> civ root trans))))
+                            (when (< dist best-d)
+                              (set! best-d dist)
+                              (set! best g)
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  (set! (-> d sphere quad) (-> (if best (-> best root trans) (target-pos 0)) quad))
+                  )
+                (set! (-> d sphere r) PKI_PANIC_RADIUS)
+                (send-event civ 'panic d)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+(defun pki-rearm-guards ()
+  "During the invasion no guard uses the tazer (pki-guard-type, at each weapon change). A Freedom
+League guard woken with its tazer before the rule applied to it (a guard of the pool kept from
+before the invasion was switched on) is given its weapon again: the weapon change goes through the
+rule, which trades the tazer for a rifle or a launcher. Returns nothing."
+  (let ((te *traffic-engine*))
+    (when te
+      (let ((trk (-> te tracker1)))
+        (dotimes (i (the-as int (-> trk active-object-count)))
+          (when (= (-> trk active-object-type-list i) (traffic-type guard-a))
+            (let ((g (the-as crimson-guard (handle->process (-> trk active-object-list i)))))
+              (when (and g
+                         (= (-> g type) crimson-guard)
+                         (= (-> g guard-type) (guard-type tazer))
+                         (= (pki-guard-side g) PKI_SIDE_FF)
+                         )
+                (crimson-guard-method-267 g (guard-type tazer) #f)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+(defun pki-kg-icons-off ()
+  "The Krimzon Guards on the street lose the blue minimap icon Jak 3 gives every guard as it goes out
+(citizen-method-194): the minimap has no red guard class, and a blue dot would say Freedom League.
+The icon fades out (Jak 2's way of dropping one). Returns nothing."
+  (let ((te *traffic-engine*))
+    (when te
+      (let ((trk (-> te tracker1)))
+        (dotimes (i (the-as int (-> trk active-object-count)))
+          (when (= (-> trk active-object-type-list i) (traffic-type guard-a))
+            (let ((g (the-as crimson-guard (handle->process (-> trk active-object-list i)))))
+              (when (and g (-> g minimap) (pki-kg? g))
+                (logior! (-> g minimap flags) (minimap-flag fade-out))
+                (set! (-> g minimap) #f)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  (none)
+  )
+
+(defbehavior pki-director-update pki-director ()
+  "One frame of the invasion in the city: every 0.5 s whether a Jak 3 mission runs (the invasion then
+steps aside, pki-on?), and while it is on its hatreds, counts and panic. Returns nothing. Side
+effect: the director's hatred? flag."
+  (when (time-elapsed? (-> self mission-time) (seconds 0.5))
+    (set-time! (-> self mission-time))
+    (pki-update-mission!)
+    )
+  ;; the invasion's hatreds: put in while it is on (again after a traffic restart reset the table),
+  ;; taken out when it is switched off; left to Jak 3's mission when it steps aside for one (the
+  ;; mission sets its own table)
+  (let ((ctrl *cty-attack-controller*))
+    (cond
+      ((pki-on?)
+       (when (and ctrl (nonzero? ctrl) (or (not (-> self hatred?)) (< (-> ctrl hatred-vals length) PKI_HATRED_COUNT)))
+         (pki-hatred-set! #t)
+         (set! (-> self hatred?) #t)
+         )
+       )
+      ((-> self hatred?)
+       (if (not *mod-praxis-kg-invasion*)
+           (pki-hatred-set! #f)
+           )
+       (set! (-> self hatred?) #f)
+       )
+      )
+    )
+  (when (pki-on?)
+    (when (time-elapsed? (-> self count-time) (seconds 0.5))
+      (set-time! (-> self count-time))
+      (pki-count-looks!)
+      (pki-kg-icons-off)
+      (pki-rearm-guards)
+      (pki-scare-civilians)
+      )
+    ;; every 2 s: each danger also holds one of the traffic engine's 16 suppression boxes for 5 s
+    (when (time-elapsed? (-> self panic-time) (seconds 2))
+      (set-time! (-> self panic-time))
+      (pki-panic)
+      )
+    )
+  (none)
+  )
+
+(defstate active (pki-director)
+  :virtual #t
+  :code (behavior ()
+    (loop
+      (pki-director-update)
+      (suspend)
+      )
+    )
+  )
+
+(defbehavior pki-director-init-by-other pki-director ()
+  "Start the director: counts at once. Returns nothing (goes active)."
+  (set! (-> self count-time) 0)
+  (set! (-> self mission-time) 0)
+  (set! (-> self panic-time) 0)
+  (set! (-> self hatred?) #f)
+  (go-virtual active)
+  )
+
+;; The traffic manager's frame (traffic-manager-method-16, its active state's post), as linked before
+;; this file in this DGO, wrapped: while the invasion is switched on, it keeps a director among its
+;; children.
+(define *pki-stock-traffic-update* (method-of-type traffic-manager traffic-manager-method-16))
+
+(defmethod traffic-manager-method-16 ((this traffic-manager))
+  "Jak 3's traffic frame, then the invasion's director started if the invasion is switched on and none
+runs (it is a child of the traffic manager: it dies with the traffic). Returns nothing."
+  (*pki-stock-traffic-update* this)
+  ;; switched on, not pki-on?: the director also tells when a Jak 3 mission ends
+  (when (and *mod-praxis-kg-invasion* (not (handle->process (-> *pki-city* director))))
+    (let ((proc (process-spawn pki-director :name "pki-director" :to this)))
+      (set! (-> *pki-city* director) (if proc
+                                         (ppointer->handle proc)
+                                         (the-as handle #f)
+                                         )
+            )
+      )
+    )
+  (none)
+  )
+
+(defun pki-city-command ((cmd int))
+  "*pki-city-hook* (praxis-kg-invasion.gc): PKI_CITY_CHANGED (the invasion or its zones changed) runs
+ctywide's activation again, as a death does: the faction state back to Jak 3's, the traffic rebuilt
+(its guards take their looks again), the squads and the attack controller reset. Returns nothing."
+  (when (= cmd PKI_CITY_CHANGED)
+    (let ((city (level-get *level* 'ctywide)))
+      (if (and city (= (-> city status) 'active))
+          (ctywide-activate city 'life)
+          )
+      )
+    )
+  (none)
+  )
+
+;; at every link of this file: the previous value pointed into the previous link
+(set! *pki-city-hook* pki-city-command)

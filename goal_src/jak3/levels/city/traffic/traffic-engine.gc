@@ -5,6 +5,12 @@
 ;; name in dgo: traffic-engine
 ;; dgos: DESRESC, WWD, CWI
 
+;; og:praxis-kg-invasion added: the invasion's unit counts, its conflict zones, and which sleeping unit
+;; may go out on a street (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-want-count (function int int int))
+(define-extern pki-spawn-ok? (function int int symbol))
+(define-extern pki-wake-ok? (function process int int symbol symbol))
+
 (deftype traffic-engine-stack-var0 (structure)
   ((params traffic-object-spawn-params :inline :offset 0)
    (vec0   vector                      :inline :offset 128)
@@ -251,6 +257,38 @@
   (none)
   )
 
+;; og:praxis-kg-invasion added: the territory (nav-territory-type) of the street activate-by-type sends
+;; a unit out on, for pki-get-from-inactive; -1 for every other wake (an 'activate-object event: a
+;; parking spot, a transport, a mission), whose params have no nav branch
+(define *pki-wake-territory* -1)
+
+(defun pki-get-from-inactive ((this traffic-tracker) (type traffic-type))
+  "og:praxis-kg-invasion added: get-from-inactive-by-type (which takes the pool's first sleeping unit
+of type), but the first one pki-wake-ok? (GAME) lets out on the street of *pki-wake-territory*, the
+one it would rather send first, else any it allows: during the invasion, a guard of either side in a
+conflict zone (the side with fewer guards out first), a Freedom League guard elsewhere; a jetpack
+guard in a zone, a stock flying turret elsewhere. Out of the invasion, or with no street (-1), every
+unit may: the stock pick. Returns its handle, #f when none may. Side effects: the pool's order and
+counts (get-from-inactive-by-type's)."
+  (let ((info (-> this traffic object-type-info-array type))
+        (territory *pki-wake-territory*)
+        )
+    (dotimes (pass 2)
+      (dotimes (i (-> info inactive-count))
+        (let ((h (-> info array i)))
+          (when (pki-wake-ok? (handle->process h) (the-as int type) territory (zero? pass))
+            ;; to the pool's head, the unit get-from-inactive-by-type takes
+            (set! (-> info array i) (-> info array 0))
+            (set! (-> info array 0) h)
+            (return (get-from-inactive-by-type this type))
+            )
+          )
+        )
+      )
+    )
+  (the-as handle #f)
+  )
+
 ;; WARN: Function (method 21 traffic-tracker) has a return type of none, but the expression builder found a return statement.
 (defmethod activate-from-params ((this traffic-tracker) (arg0 traffic-object-spawn-params))
   (let ((gp-0 (-> arg0 object-type)))
@@ -258,7 +296,8 @@
     (set! (-> arg0 proc) #f)
     (let ((v1-5 (-> this traffic object-type-info-array gp-0)))
       (when (and (> (-> v1-5 inactive-count) 0) (> (-> v1-5 reserve-count) 0))
-        (let* ((sv-16 (get-from-inactive-by-type this gp-0))
+        ;; og:praxis-kg-invasion changed: the first sleeping unit the invasion lets out here (pki-get-from-inactive)
+        (let* ((sv-16 (pki-get-from-inactive this gp-0))
                (s3-0 (handle->process sv-16))
                )
           (when s3-0
@@ -301,6 +340,8 @@
                (< (-> s1-0 active-count) (-> s1-0 want-count))
                )
       (when *cty-faction-manager*
+        ;; og:praxis-kg-invasion added: the invasion keeps the other factions out of its zones
+        (if (not (pki-spawn-ok? (the-as int arg0) (the-as int (-> arg1 branch clock-type)))) (return #f))
         (if (not (cty-faction-manager-method-23 *cty-faction-manager* (the-as uint (-> arg1 branch clock-mask))))
             (return #f)
             )
@@ -342,7 +383,10 @@
               )
           (forward-up-nopitch->quaternion (-> s4-0 params rotation) (-> s4-0 vec0) (new 'static 'vector :y 1.0 :w 1.0))
           (set! (-> this rand) (rand-vu))
+          ;; og:praxis-kg-invasion added: the street's territory, for pki-get-from-inactive (-1 after)
+          (set! *pki-wake-territory* (the-as int (-> arg1 branch clock-type)))
           (activate-from-params this (-> s4-0 params))
+          (set! *pki-wake-territory* -1)
           )
         )
       )
@@ -727,14 +771,19 @@
           (when (and (> (-> v1-15 inactive-count) 0) (> (-> v1-15 reserve-count) 0))
             (let ((s1-0 (-> this object-type-info-array s2-0)))
               (when (-> s1-0 level)
+                ;; og:praxis-kg-invasion added: the squads' count for the territory, or the invasion's
                 (let ((s0-0
-                        (-> s1-0
-                            target-counts
-                            (cty-faction-manager-method-10 *cty-faction-manager* (the-as int (-> arg0 branch clock-type)) (-> s1-0 level))
-                            )
+                        (pki-want-count
+                          s2-0
+                          (-> s1-0
+                              target-counts
+                              (cty-faction-manager-method-10 *cty-faction-manager* (the-as int (-> arg0 branch clock-type)) (-> s1-0 level))
+                              )
+                          )
                         )
                       )
-                  (when (< (-> s1-0 active-count) s0-0)
+                  ;; og:praxis-kg-invasion changed: a type the invasion keeps out of this street isn't a candidate
+                  (when (and (< (-> s1-0 active-count) s0-0) (pki-spawn-ok? s2-0 (the-as int (-> arg0 branch clock-type))))
                     (when (logtest? (cty-faction-manager-method-9 *cty-faction-manager* (the-as int (-> arg0 branch clock-type)) (-> s1-0 level))
                                     2
                                     )

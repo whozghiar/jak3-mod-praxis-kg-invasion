@@ -5,6 +5,11 @@
 ;; name in dgo: guard-grenade
 ;; dgos: CWI
 
+;; og:praxis-kg-invasion added: the invasion's guard rules (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-reload-speed (function process float float))
+(define-extern pki-melee-ok? (function process-drawable symbol))
+(define-extern pki-reload-break-ok? (function process-drawable symbol))
+
 ;; DECOMP BEGINS
 
 (defmethod crimson-guard-method-264 ((this crimson-guard))
@@ -125,7 +130,8 @@
       ((>= (-> self target-self-xz-dist) (* 1.2 (-> self grenade-guard-min-player-dist)))
        (go-virtual grenade-throw-post-reloading)
        )
-      ((< (-> self target-self-xz-dist) 16384.0)
+      ;; og:praxis-kg-invasion added the invasion's rule: the rifle butt for Jak alone (pki-melee-ok?)
+      ((and (< (-> self target-self-xz-dist) 16384.0) (pki-melee-ok? self))
        (go-virtual close-attack)
        )
       )
@@ -327,7 +333,8 @@
     (set! (-> self reloading-ammo) (the-as handle #f))
     )
   :trans (behavior ()
-    (when (>= (/ (-> self grenade-guard-min-player-dist) 2) (-> self target-self-xz-dist))
+    ;; og:praxis-kg-invasion added the invasion's rule: the reload broken off for Jak alone (pki-reload-break-ok?)
+    (when (and (>= (/ (-> self grenade-guard-min-player-dist) 2) (-> self target-self-xz-dist)) (pki-reload-break-ok? self))
       (cond
         ((not (time-elapsed? (-> self state-time) (seconds 1.5)))
          (+! (-> self num-times-reloading-interrupted) 1)
@@ -350,7 +357,8 @@
     )
   :code (behavior ()
     (ja-channel-push! 1 (seconds 0.2))
-    (ja-no-eval :group! crimson-guard-grenade-reload-ja :num! (seek! max 0.92) :frame-num 0.0)
+    ;; og:praxis-kg-invasion added the speed hook (pki-reload-speed): a guard of the invasion reloads faster
+    (ja-no-eval :group! crimson-guard-grenade-reload-ja :num! (seek! max (pki-reload-speed self 0.92)) :frame-num 0.0)
     (until (ja-done? 0)
       (let ((gp-0 (handle->process (-> self reloading-ammo)))
             (f0-4 (ja-frame-num 0))
@@ -367,13 +375,16 @@
           )
         )
       (suspend)
-      (ja :num! (seek! max 0.92))
+      ;; og:praxis-kg-invasion added the speed hook
+      (ja :num! (seek! max (pki-reload-speed self 0.92)))
       )
     (ja-channel-push! 1 0)
-    (ja-no-eval :group! crimson-guard-cock-gun-ja :num! (seek! max 0.5) :frame-num 0.0)
+    ;; og:praxis-kg-invasion added the speed hook
+    (ja-no-eval :group! crimson-guard-cock-gun-ja :num! (seek! max (pki-reload-speed self 0.5)) :frame-num 0.0)
     (until (ja-done? 0)
       (suspend)
-      (ja :num! (seek! max 0.5))
+      ;; og:praxis-kg-invasion added the speed hook
+      (ja :num! (seek! max (pki-reload-speed self 0.5)))
       )
     (crimson-guard-method-285 self 1)
     (go-hostile self)

@@ -85,6 +85,7 @@
   "krimson-wall.o"
   "trail.o"
   "searchlight.o"
+  "pki-city.o" ;; added -- og:praxis-kg-invasion the invasion's city part (director, hatreds, panic)
   "jak-pilot+0-ag.go"
   "jak-pilot-hcar+0-ag.go"
   "jak-pilot-gun+0-ag.go"

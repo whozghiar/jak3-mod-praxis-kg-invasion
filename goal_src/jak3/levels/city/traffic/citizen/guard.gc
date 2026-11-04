@@ -5,6 +5,14 @@
 ;; name in dgo: guard
 ;; dgos: CWI
 
+;; og:praxis-kg-invasion added: the invasion's looks and sides (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-guard-skel-name (function process-drawable string))
+(define-extern pki-attacker-type (function process int int))
+(define-extern pki-guard-flags (function process uint uint uint))
+(define-extern pki-guard-activated (function process none))
+(define-extern pki-guard-clips (function process-drawable none))
+(define-extern pki-guard-type (function process int int))
+
 ;; DECOMP BEGINS
 
 (define *guard-died-recently?* #f)
@@ -1551,9 +1559,12 @@
   "Typical place for shared init code. Runs from entity or process style init."
   (initialize-skeleton
     this
-    (the-as skeleton-group (art-group-get-by-name *level* "skel-crimson-guard" (the-as (pointer level) #f)))
+    ;; og:praxis-kg-invasion added: "skel-crimson-guard", or a look of the invasion (red, yellow Krimzon Guard)
+    (the-as skeleton-group (art-group-get-by-name *level* (pki-guard-skel-name this) (the-as (pointer level) #f)))
     (the-as pair 0)
     )
+  ;; og:praxis-kg-invasion added: a Krimzon Guard plays the blue guard's clips (crimson-guard-ag)
+  (pki-guard-clips this)
   (set! (-> this joint) (new 'process 'joint-mod (joint-mod-mode polar-look-at) this 4))
   (set! (-> this state-stack) (new 'process 'boxed-array state 6))
   (set! (-> this state-stack length) 0)
@@ -1605,6 +1616,8 @@
 
 ;; WARN: Function (method 267 crimson-guard) has a return type of none, but the expression builder found a return statement.
 (defmethod crimson-guard-method-267 ((this crimson-guard) (arg0 guard-type) (arg1 symbol))
+  ;; og:praxis-kg-invasion added: a Krimzon Guard takes its model's weapon, never the tazer
+  (set! arg0 (the-as guard-type (pki-guard-type this (the-as int arg0))))
   (if (= arg0 (-> this guard-type))
       (return 0)
       )
@@ -1628,7 +1641,10 @@
       (set! (-> this ammo-count) (/ (-> this ammo-count) 2))
       )
   (if (-> this attacker-info)
-      (set! (-> this attacker-info self-type) (the-as int (guard-type->city-target-type (-> this guard-type))))
+      ;; og:praxis-kg-invasion added: a Krimzon Guard registers as the faction praxis-kguard
+      (set! (-> this attacker-info self-type)
+            (pki-attacker-type this (the-as int (guard-type->city-target-type (-> this guard-type))))
+            )
       )
   (cond
     ((and (not arg1) (logtest? (-> this flags) (citizen-flag dark-guard)))
@@ -1682,6 +1698,8 @@
   (set! (-> this next-update-target-time) 0)
   (set! (-> this pursuit-start-time) 0)
   (set! (-> this last-choose-new-enemy-time) 0)
+  ;; og:praxis-kg-invasion added: a yellow Krimzon Guard is a dark guard, a red one never
+  (set! (-> this flags) (the-as citizen-flag (pki-guard-flags this (the-as uint (-> this flags)) (the-as uint (citizen-flag dark-guard)))))
   (if (logtest? (-> this flags) (citizen-flag dark-guard))
       (set! (-> this hit-points) (* 2.0 (-> this enemy-info default-hit-points)))
       )
@@ -1759,6 +1777,8 @@
       )
   (set! (-> this move-index) -1)
   (set! (-> this reaction-time) (rnd-time-frame this (seconds 0.1) (seconds 0.15)))
+  ;; og:praxis-kg-invasion added: a Krimzon Guard gets the enemy process mask back
+  (pki-guard-activated this)
   (ja-channel-set! 0)
   0
   (none)
@@ -1836,7 +1856,11 @@
                     )
                   )
             )
-        (when (!= a1-3 (-> this guard-type))
+        ;; og:praxis-kg-invasion added the hook (pki-guard-type): the weapon the guard would really get. A
+        ;; guard of the invasion keeps the weapon the invasion gives it, so the change Jak 3 asks for every
+        ;; 16 frames off screen changed nothing, and this method still answered #t: the guard went hostile
+        ;; again each time, and the city crashed within a minute (seen in Haven City: New Dawn)
+        (when (!= (pki-guard-type this (the-as int a1-3)) (the-as int (-> this guard-type)))
           (crimson-guard-method-267 this (the-as guard-type a1-3) #f)
           (return #t)
           )
@@ -2009,7 +2033,8 @@
     (set! (-> this mission-squad) *cty-attack-controller*)
     (when (not (-> this attacker-info))
       (set! (-> this attacker-info) (allocate-attacker (-> this mission-squad)))
-      (init! (-> this attacker-info) this (the-as int (guard-type->city-target-type (-> this guard-type))))
+      ;; og:praxis-kg-invasion added: a Krimzon Guard registers as the faction praxis-kguard
+      (init! (-> this attacker-info) this (pki-attacker-type this (the-as int (guard-type->city-target-type (-> this guard-type)))))
       )
     )
   (none)

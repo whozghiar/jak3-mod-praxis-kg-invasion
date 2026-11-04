@@ -5,6 +5,9 @@
 ;; name in dgo: traffic-util
 ;; dgos: DESRESC, WWD, CWI
 
+;; og:praxis-kg-invasion added: the invasion's traffic distances (pc/features/praxis-kg-invasion.gc, GAME)
+(define-extern pki-cell-dist (function int float float))
+
 ;; DECOMP BEGINS
 
 (defun-debug add-debug-line-arrow ()
@@ -907,9 +910,10 @@
       )
     )
   (let ((s5-0 (math-camera-pos))
-        (f30-0 81920.0)
+        ;; og:praxis-kg-invasion added the hook (pki-cell-dist): wider during the invasion, stock otherwise
+        (f30-0 (pki-cell-dist 0 81920.0))
         (f28-0 819200.0)
-        (f26-0 491520.0)
+        (f26-0 (pki-cell-dist 1 491520.0))
         )
     (dotimes (s4-0 (the-as int (-> this city-info cell-count)))
       (let ((s3-0 (-> this city-info cell-array s4-0)))

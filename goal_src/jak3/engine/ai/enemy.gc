@@ -5,6 +5,9 @@
 ;; name in dgo: enemy
 ;; dgos: GAME
 
+;; og:praxis-kg-invasion added: the Krimzon Guard models' death cloud (pc/features/praxis-kg-invasion.gc)
+(define-extern pki-death-start (function process-drawable none))
+
 ;; DECOMP BEGINS
 
 (defmethod copy-enemy-info! ((this enemy-info) (arg0 enemy-info))
@@ -1927,6 +1930,8 @@
      )
     ((= msg 'death-start)
      (set! (-> this enemy-flags) (the-as enemy-flag (logior (enemy-flag death-start) (-> this enemy-flags))))
+     ;; og:praxis-kg-invasion added: a Krimzon Guard model's death cloud (pki-death-start)
+     (pki-death-start this)
      (send-event (ppointer->process (-> this parent)) 'child-die)
      (when (< (-> *event-queue* length) (-> *event-queue* allocated-length))
        (let ((v1-269 (-> *event-queue* data (-> *event-queue* length))))
