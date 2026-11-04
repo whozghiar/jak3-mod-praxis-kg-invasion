@@ -101,3 +101,10 @@ _new-all-types.gc
 graphify-out/*
 !graphify-out/graph.json
 !graphify-out/GRAPH_REPORT.md
+
+# Praxis KG Invasion: models and music made from the player's discs by task modding-models
+# (custom_assets/jak3/models/models.jsonc), never committed
+/custom_assets/jak3/models/custom_levels/pki-*.glb
+/custom_assets/jak3/models/ctypesa/pki-*-lod0.glb
+/custom_assets/jak3/models/ctypesc/pki-*-lod0.glb
+/custom_assets/jak3/music/PKIDANG4.MUS

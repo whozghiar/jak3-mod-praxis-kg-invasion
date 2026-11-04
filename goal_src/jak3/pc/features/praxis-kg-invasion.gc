@@ -15,14 +15,14 @@
   district of the city by default: *mod-praxis-kg-invasion-zones*). In a zone the two sides are all
   there is (no KG robot, Metal Head or Wastelander comes out), elsewhere Jak 3's city is as it is.
   No ship flies, of either side. While the two sides fight near Jak, the city plays Jak 2's music of
-  the fight against Baron Praxis (Jak 2's DANGER4.MUS, kept as custom_assets/jak3/music/PKIDANG4.MUS: 'pkidang4) instead of Jak 3's
-  fight music (fight1). A Jak 3 mission in the
+  the fight against Baron Praxis (Jak 2's DANGER4.MUS, copied from the player's disc as
+  custom_assets/jak3/music/PKIDANG4.MUS: 'pkidang4) instead of Jak 3's fight music (fight1). A Jak 3 mission in the
   city sets its own factions and units: the invasion steps aside until it ends.
 
   How: the guards and jetpack guards are Jak 3's own traffic units (`crimson-guard`, and
-  `flying-turret` for the jetpacks), drawn with Jak 2's models (build-actor, made by
-  scripts/praxis_kg_invasion/make_models.py: pki-kg-red, pki-kg-red-gl, pki-kg-yellow,
-  pki-kg-yellow-gl, pki-hover-red). Marked lines ("og:praxis-kg-invasion") in Jak 3's guard,
+  `flying-turret` for the jetpacks), drawn with Jak 2's models (build-actor, made from the player's
+  discs by task modding-models, custom_assets/jak3/models/models.jsonc: pki-kg-red, pki-kg-red-gl,
+  pki-kg-yellow, pki-kg-yellow-gl, pki-hover-red). Marked lines ("og:praxis-kg-invasion") in Jak 3's guard,
   flying turret, traffic and faction code call the functions below, each of which gives back the
   stock answer while the invasion is off. Jak 3's faction manager and traffic hold the zones through
   three hooks: pki-permission (a zone's spawn permissions), pki-spawn-ok? (which traffic types come
@@ -179,7 +179,7 @@ invasion on, follows at once. Returns nothing."
 
 ;; Models ////////////////////////////////////////////////////////////////////////////////////////
 ;;
-;; Jak 2's Krimzon Guard on Jak 3's guard skeleton and clips (make_models.py orders the clips like
+;; Jak 2's Krimzon Guard on Jak 3's guard skeleton and clips (models.jsonc orders the clips like
 ;; crimson-guard-ag: idle 4 ... shield-sidle 55), so Jak 3's crimson-guard code drives it unchanged.
 ;; A build-actor model draws all its primitives: each weapon is its own model (rifle; grenade
 ;; launcher and tazer). Yellow: Jak 2's dark guard armor. The art groups are in the levels whose
@@ -219,7 +219,7 @@ invasion on, follows at once. Returns nothing."
               :origin-joint-index 3
               )
 
-;; Jak 2's jetpack guard, on the code of Jak 3's Krimzon Guard flying turret: make_models.py puts the
+;; Jak 2's jetpack guard, on the code of Jak 3's Krimzon Guard flying turret: models.jsonc puts the
 ;; three clips that code plays first (2 idle, 3 hover = fly-forward, 4 fire = shoot0).
 (def-art-elt pki-hover-red-ag pki-hover-red-lod0-jg 0)
 (def-art-elt pki-hover-red-ag pki-hover-red-lod0-mg 1)

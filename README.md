@@ -66,10 +66,13 @@ task set-game-jak3
 - **Status:** not required (GOAL-only mod, standard binaries).
 
 ### 3. Models and Asset Extraction
-- **Status:** required. The Krimzon Guard models are made from your own Jak 2 and Jak 3
-  extractions (with `rip_levels` on for both games), then baked into Jak 3's city levels:
+- **Status:** required, with your Jak 2 and Jak 3 disc files in `iso_data/jak2` and
+  `iso_data/jak3`. The Krimzon Guard models and the fight music are not in the repository:
+  `task modding-models` makes them from your own discs (`custom_assets/jak3/models/models.jsonc`),
+  then `task extract` bakes the models into Jak 3's city levels. A launcher install does both by
+  itself, and needs Jak 2 installed in the launcher.
 ```bash
-python scripts/praxis_kg_invasion/make_models.py
+task modding-models
 task extract
 ```
 

@@ -17,9 +17,10 @@ of the story:
 - no guard vehicle flies, of either side;
 - the citizens flee, and the Krimzon Guards attack them and Jak;
 - the fight music is Jak 2's music of the fight against Baron Praxis (Jak 2's `DANGER4.MUS`,
-  `drill-baron.gc`'s `'danger4`) instead of Jak 3's `fight1`: kept in the mod as
-  `custom_assets/jak3/music/PKIDANG4.MUS`, copied by `game.gp` next to Jak 3's files, played as
-  `'pkidang4` (the two games share the music format; Haven City: New Dawn plays Jak 2's this way).
+  `drill-baron.gc`'s `'danger4`) instead of Jak 3's `fight1`: copied from the player's Jak 2 disc to
+  `custom_assets/jak3/music/PKIDANG4.MUS` with the models (section 3), then by `game.gp` next to Jak
+  3's files, played as `'pkidang4` (the two games share the music format; Haven City: New Dawn plays
+  Jak 2's this way).
 
 A Jak 3 mission in the city (a `task-manager` process) sets its own factions and units: the
 invasion steps aside until it ends. The switch is off at every boot; nothing changes while it is off.
@@ -30,16 +31,19 @@ invasion steps aside until it ends. The switch is off at every boot; nothing cha
 |---|---|
 | `goal_src/jak3/pc/features/praxis-kg-invasion.gc` (GAME) | Switch, zones, models' skeleton groups, looks and sides, every hook Jak 3's code calls, Mods menu entry |
 | `goal_src/jak3/levels/city/war/pki-city.gc` (CWI) | The director: mission check, looks count, hatreds, citizens' panic; started by a wrapper of `traffic-manager-method-16` |
-| `scripts/praxis_kg_invasion/make_models.py` | Builds the five models from the player's Jak 2 and Jak 3 rips |
-| `custom_assets/jak3/music/PKIDANG4.MUS` | Jak 2's `DANGER4.MUS`, the fight music |
+| `custom_assets/jak3/models/models.jsonc` | The five models' and the fight music's recipe for master-dev's `mod_models` |
 | `custom_assets/jak3/models/custom_levels/pki-*.glb` | The models `build-actor` reads |
 | `custom_assets/jak3/models/ctypesa/`, `ctypesc/` | The same meshes, baked into those levels' `.fr3` by `task extract` |
 | `goal_src/jak3/dgos/game.gd`, `cwi.gd`, `ctypesa.gd`, `ctypesc.gd`, `goal_src/jak3/game.gp` | Links the two `.gc` files and the five art groups |
 
 ## 3. Models
 
-`make_models.py` reads `decompiler_out/jak2/levels/forresca/crimson-guard-lod0.glb`,
-`crimson-guard-hover-lod0.glb` (same folder) and `decompiler_out/jak3/levels/ctypesa/crimson-guard-lod0.glb`.
+None of them is kept in the repository. `custom_assets/jak3/models/models.jsonc` describes them, and master-dev's `mod_models`
+makes them from the player's own discs (`task modding-models`; at a launcher install the extractor
+runs it before its decompile; [guide](../guides/models_from_the_discs.md)): it rips Jak 2's
+`FRA.DGO` (forresca: `crimson-guard-lod0.glb`, `crimson-guard-hover-lod0.glb`) and Jak 3's
+`CTYPESA.DGO` (`crimson-guard-lod0.glb`, the skeleton and clips) when they are missing, and copies
+Jak 2's `MUS/DANGER4.MUS`. Checked: the same bytes as the models the mod first kept.
 
 | Model | Content | Level |
 |---|---|---|
@@ -114,7 +118,7 @@ every count, the game's log showing `Load music pkidang4` and no error; no crash
 - The Krimzon Guards have no minimap icon of their own: their blue icon is removed
   (`pki-kg-icons-off`), the minimap has no red guard class.
 - They speak Jak 3's guard lines.
-- The fight music and the models are Jak 2's files kept in the repository: publish it as a private
-  repository.
+- Installing the mod needs Jak 2 installed in the launcher too: the models and the music come from
+  its disc.
 - Tested with a save whose story isn't over; a finished story's city has more guards and was not
   tested.
