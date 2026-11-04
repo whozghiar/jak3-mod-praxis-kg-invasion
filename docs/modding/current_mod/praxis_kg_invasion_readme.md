@@ -16,8 +16,10 @@ of the story:
   out; outside the zones the city is Jak 3's;
 - no guard vehicle flies, of either side;
 - the citizens flee, and the Krimzon Guards attack them and Jak;
-- the fight music is `portattk` (Jak 3's attack on the port, the blackout mission's) instead of
-  `fight1`.
+- the fight music is Jak 2's music of the fight against Baron Praxis (Jak 2's `DANGER4.MUS`,
+  `drill-baron.gc`'s `'danger4`) instead of Jak 3's `fight1`: kept in the mod as
+  `custom_assets/jak3/music/PKIDANG4.MUS`, copied by `game.gp` next to Jak 3's files, played as
+  `'pkidang4` (the two games share the music format; Haven City: New Dawn plays Jak 2's this way).
 
 A Jak 3 mission in the city (a `task-manager` process) sets its own factions and units: the
 invasion steps aside until it ends. The switch is off at every boot; nothing changes while it is off.
@@ -29,6 +31,7 @@ invasion steps aside until it ends. The switch is off at every boot; nothing cha
 | `goal_src/jak3/pc/features/praxis-kg-invasion.gc` (GAME) | Switch, zones, models' skeleton groups, looks and sides, every hook Jak 3's code calls, Mods menu entry |
 | `goal_src/jak3/levels/city/war/pki-city.gc` (CWI) | The director: mission check, looks count, hatreds, citizens' panic; started by a wrapper of `traffic-manager-method-16` |
 | `scripts/praxis_kg_invasion/make_models.py` | Builds the five models from the player's Jak 2 and Jak 3 rips |
+| `custom_assets/jak3/music/PKIDANG4.MUS` | Jak 2's `DANGER4.MUS`, the fight music |
 | `custom_assets/jak3/models/custom_levels/pki-*.glb` | The models `build-actor` reads |
 | `custom_assets/jak3/models/ctypesa/`, `ctypesc/` | The same meshes, baked into those levels' `.fr3` by `task extract` |
 | `goal_src/jak3/dgos/game.gd`, `cwi.gd`, `ctypesa.gd`, `ctypesc.gd`, `goal_src/jak3/game.gp` | Links the two `.gc` files and the five art groups |
@@ -98,15 +101,20 @@ the port, then 50 s in the industrial section, a count every 10 s.
 
 | Where | Blue guards | Red | Yellow | Red jetpacks | KG robots, Metal Heads | KG aiming at blue | Blue aiming at KG | Music |
 |---|---|---|---|---|---|---|---|---|
-| Port | 3 to 6 | 2 to 4 | 1 to 3 | 1 to 2 | 0 | 2 to 6 | 3 to 6 | `portattk` |
+| Port | 3 to 6 | 2 to 4 | 1 to 3 | 1 to 2 | 0 | 2 to 6 | 3 to 6 | `portattk` (the first choice) |
 | Industrial section | 4 to 9 | 4 to 7 | 1 to 3 | 2 to 3 | 0 | 4 to 9 | 4 to 9 | `portattk` |
 
-The screenshots in `docs/img/mod/` come from that run. The game never crashed.
+The screenshots in `docs/img/mod/` come from that run. The game never crashed. A second run with
+Jak 2's music, the same way (2026-11-05): port 1 to 6 blue, 1 to 3 red, 1 to 3 yellow, 0 to 3
+jetpacks; industrial section 4 to 6 blue, 3 to 5 red, 2 yellow, 2 jetpacks; music `pkidang4` at
+every count, the game's log showing `Load music pkidang4` and no error; no crash.
 
 ## 7. Limits
 
 - The Krimzon Guards have no minimap icon of their own: their blue icon is removed
   (`pki-kg-icons-off`), the minimap has no red guard class.
 - They speak Jak 3's guard lines.
+- The fight music and the models are Jak 2's files kept in the repository: publish it as a private
+  repository.
 - Tested with a save whose story isn't over; a finished story's city has more guards and was not
   tested.

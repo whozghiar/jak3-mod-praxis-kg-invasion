@@ -25,8 +25,8 @@ jetpack guards, fight the Freedom League's blue guards street by street, in the 
 - **Red jetpack guards** fly over the conflict zones.
 - **Pick the battlefield:** every district of the city by default, or only the ones you tick
   (port, industrial section, slums, Metal Head city...).
-- **The citizens flee**, the Krimzon Guards shoot at Jak too, and the fights play the music of the
-  Krimzon Guard's attack on the port.
+- **The citizens flee**, the Krimzon Guards shoot at Jak too, and the fights play Jak 2's music of
+  the fight against Baron Praxis.
 - **Off by default:** the game is unchanged until you switch the invasion on. A Jak 3 mission in the
   city keeps the city as the mission wants it; the invasion comes back when it ends.
 

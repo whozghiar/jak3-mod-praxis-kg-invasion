@@ -445,6 +445,13 @@
 (build-actor "pki-kg-yellow-gl" :framerate 15.0 :joint-channel 8)
 (build-actor "pki-hover-red" :framerate 15.0)
 
+;; og:praxis-kg-invasion added: the invasion's fight music, Jak 2's fight against Baron Praxis
+;; (Jak 2's DANGER4.MUS, drill-baron.gc's 'danger4), kept in the mod as PKIDANG4.MUS (Jak 3 has no
+;; file of that name; the music 'pkidang4) and copied next to Jak 3's own files. Jak 2 and Jak 3
+;; share the music file format (the mod Haven City: New Dawn plays Jak 2's this way).
+(defstep :in "custom_assets/jak3/music/PKIDANG4.MUS" :tool 'copy :out '("$OUT/iso/PKIDANG4.MUS"))
+(set! *all-sbk* (cons "$OUT/iso/PKIDANG4.MUS" *all-sbk*))
+
 ;;;;;;;;;;;;;;;;;;;;;
 ;; ANIMATIONS
 ;;;;;;;;;;;;;;;;;;;;;

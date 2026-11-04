@@ -14,8 +14,9 @@
   guards) fights the Freedom League's blue guards in the conflict zones chosen in the menu (every
   district of the city by default: *mod-praxis-kg-invasion-zones*). In a zone the two sides are all
   there is (no KG robot, Metal Head or Wastelander comes out), elsewhere Jak 3's city is as it is.
-  No ship flies, of either side. While the two sides fight near Jak, the city plays the music of
-  Jak 3's attack on the port (portattk) instead of its fight music (fight1). A Jak 3 mission in the
+  No ship flies, of either side. While the two sides fight near Jak, the city plays Jak 2's music of
+  the fight against Baron Praxis (Jak 2's DANGER4.MUS, kept as custom_assets/jak3/music/PKIDANG4.MUS: 'pkidang4) instead of Jak 3's
+  fight music (fight1). A Jak 3 mission in the
   city sets its own factions and units: the invasion steps aside until it ends.
 
   How: the guards and jetpack guards are Jak 3's own traffic units (`crimson-guard`, and
@@ -851,9 +852,9 @@ effects."
 
 (defun pki-fight-music ((stock symbol))
   "Called by cty-faction.gc as a fight near Jak starts its music (stock: Jak 3's fight1): during the
-invasion, the music of Jak 3's attack on the port (portattk, the blackout mission's), else stock. No
-side effects."
-  (if (pki-on?) 'portattk stock)
+invasion, Jak 2's music of the fight against Baron Praxis ('pkidang4: Jak 2's DANGER4.MUS, which
+game.gp copies from custom_assets/jak3/music), else stock. No side effects."
+  (if (pki-on?) 'pkidang4 stock)
   )
 
 ;; Mods menu /////////////////////////////////////////////////////////////////////////////////////
