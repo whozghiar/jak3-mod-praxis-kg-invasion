@@ -177,6 +177,10 @@ your go-ahead.
 - **Models, animations, sounds, levels:** sources under `custom_assets/<game>/`; the wiki's
   [assets page](../../../.agents/skills/goal-lisp/wiki/assets.md) walks through the Blender
   export and the build steps.
+- **Models taken from a game** (another game's character, a music file): never commit them.
+  Describe them in `custom_assets/<game>/models/models.jsonc`; `task modding-models` makes them
+  from your discs, and the release makes them from the player's at install:
+  [`models_from_the_discs.md`](models_from_the_discs.md).
 - **Textures:** inside the mod (PNGs under `custom_assets/<game>/texture_replacements/`, baked
   at install), or as a texture pack published next to it, which the launcher applies to the base
   game only. Both, step by step: [`texture_packs.md`](texture_packs.md).
