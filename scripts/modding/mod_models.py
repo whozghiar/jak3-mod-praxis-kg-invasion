@@ -30,13 +30,19 @@ The manifest (comments allowed):
         "clips": ["idle", "walk"],             // the clips in this order (optional: the rip's)
         "clip_prefix": "",                     // the rip's clip names start with it
         "textures_from": "jak3/ctypesa/crimson-guard-lod0.glb", // images of the same name taken
-        "texture_prefix": "cguardgame-"        // from this rip (those starting with the prefix)
+        "texture_prefix": "cguardgame-",       // from this rip (those starting with the prefix)
+        "recolor": {"hues": [-15, 15], "rotate": 217, "min_saturation": 0.3}
+                                               // a color variant: the texels of a hue in hues
+                                               // (degrees, lo below 0 wraps around red) and that
+                                               // saturated turned by rotate degrees; "textures":
+                                               // [names] limits it to those images (optional)
       }
     },
     "files": {"custom_assets/jak3/music/X.MUS": "jak2/MUS/DANGER4.MUS"}  // copies from a disc
   }
 
-Each model is written twice, same content: custom_assets/<game>/models/custom_levels/<name>.glb,
+An image a recolor rule changes is renamed <image>-<model>: two variants of one rip baked into
+the same level keep their own textures. Each model is written twice, same content: custom_assets/<game>/models/custom_levels/<name>.glb,
 which build-actor reads (art group <name>-ag), and custom_assets/<game>/models/<level>/
 <name>-lod0.glb, which the level extraction (task extract) bakes into <level>.fr3 for the
 renderer. A missing rip is extracted first: the decompiler of out/build/Release/bin on
@@ -47,12 +53,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import colorsys
 import json
 import os
 import re
 import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -159,6 +167,77 @@ def image_bytes(src: Glb, image: dict) -> tuple[bytes, str]:
     return base64.b64decode(payload), head[5:].split(";")[0]
 
 
+def png_decode(data: bytes) -> tuple[int, int, bytearray]:
+    """(width, height, pixels) of an 8 bit RGB or RGBA PNG (the rips' textures): pixels is a
+    bytearray of RGBA, row after row."""
+    width, height, depth, color = struct.unpack(">IIBB", data[16:26])
+    channels = {2: 3, 6: 4}.get(color)
+    if depth != 8 or not channels:
+        raise ValueError(f"PNG of bit depth {depth}, color type {color}: only 8 bit RGB(A)")
+    pos, idat = 8, b""
+    while pos < len(data):
+        size, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IDAT":
+            idat += data[pos + 8:pos + 8 + size]
+        pos += 12 + size
+    raw = zlib.decompress(idat)
+    stride = width * channels
+    prev = bytearray(stride)
+    out = bytearray()
+    for y in range(height):
+        kind = raw[y * (stride + 1)]
+        row = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = row[i - channels] if i >= channels else 0
+            b = prev[i]
+            c = prev[i - channels] if i >= channels else 0
+            if kind == 1:
+                row[i] = (row[i] + a) & 255
+            elif kind == 2:
+                row[i] = (row[i] + b) & 255
+            elif kind == 3:
+                row[i] = (row[i] + (a + b) // 2) & 255
+            elif kind == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                row[i] = (row[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        prev = row
+        if channels == 3:
+            for x in range(width):
+                out += row[3 * x:3 * x + 3] + b"\xff"
+        else:
+            out += row
+    return width, height, out
+
+
+def png_encode(width: int, height: int, pixels: bytearray) -> bytes:
+    """An RGBA PNG (no filter) of pixels (RGBA, row after row)."""
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(
+            ">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+    stride = width * 4
+    raw = b"".join(b"\0" + bytes(pixels[y * stride:(y + 1) * stride]) for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def recolor_pixels(pixels: bytearray, hues: list[float], rotate: float, min_saturation: float) -> int:
+    """Turn by rotate degrees the hue of the texels whose hue is in hues ([lo, hi] degrees, lo may
+    be negative: a window around red) and whose saturation is at least min_saturation, in place
+    (RGBA pixels). Returns the number of texels changed. The mod Haven City: New Dawn's rule
+    (scripts/level_port/common/glb.py there)."""
+    lo, hi = hues
+    changed = 0
+    for i in range(0, len(pixels), 4):
+        h, s, v = colorsys.rgb_to_hsv(pixels[i] / 255, pixels[i + 1] / 255, pixels[i + 2] / 255)
+        deg = h * 360.0
+        if s >= min_saturation and (lo <= deg <= hi or lo <= deg - 360.0 <= hi):
+            r, g, b = colorsys.hsv_to_rgb(((deg + rotate) % 360.0) / 360.0, s, v)
+            pixels[i:i + 3] = bytes(int(round(c * 255)) for c in (r, g, b))
+            changed += 1
+    return changed
+
+
 def copy_skeleton(out: Writer, src: Glb) -> tuple[int, dict[int, int]]:
     """Copy every node of `src` (meshes detached), its skin and its scene roots.
     Returns the index of the node that carried the skinned mesh and the node index map."""
@@ -181,12 +260,15 @@ def copy_skeleton(out: Writer, src: Glb) -> tuple[int, dict[int, int]]:
 
 
 def copy_mesh(out: Writer, src: Glb, mesh_node: int, keep: list[int] | None,
-              joint_remap: np.ndarray | None, textures_from: dict[str, tuple[bytes, str]] | None):
+              joint_remap: np.ndarray | None, textures_from: dict[str, tuple[bytes, str]] | None,
+              recolor: dict | None = None, model: str = ""):
     """Copy the skinned mesh of `src` onto node `mesh_node` of `out`.
 
     keep          primitive indices to keep (None: all)
     joint_remap   JOINTS_0 value map from `src`'s skin to `out`'s (None: unchanged)
-    textures_from image name -> pixels replacing `src`'s image of that name"""
+    textures_from image name -> pixels replacing `src`'s image of that name
+    recolor      the model's recolor rule (None: none); an image it changes is renamed
+                 <image>-<model>"""
     mesh = src.json["meshes"][0]
     prims = mesh["primitives"] if keep is None else [mesh["primitives"][i] for i in keep]
     attr_map: dict[tuple[str, int], int] = {}
@@ -201,7 +283,14 @@ def copy_mesh(out: Writer, src: Glb, mesh_node: int, keep: list[int] | None,
             data, mime = image_bytes(src, img)
             if textures_from and img.get("name") in textures_from:
                 data, mime = textures_from[img["name"]]
-            out.json["images"].append({"name": img.get("name", f"image{index}"), "mimeType": mime,
+            name = img.get("name", f"image{index}")
+            if (recolor and mime == "image/png"
+                    and ("textures" not in recolor or name in recolor["textures"])):
+                width, height, pixels = png_decode(data)
+                if recolor_pixels(pixels, recolor["hues"], recolor["rotate"],
+                                  recolor.get("min_saturation", 0.0)):
+                    data, name = png_encode(width, height, pixels), f"{name}-{model}"
+            out.json["images"].append({"name": name, "mimeType": mime,
                                        "bufferView": out.view(data)})
             image_map[index] = len(out.json["images"]) - 1
         return image_map[index]
@@ -400,7 +489,7 @@ def build_model(ctx: Context, name: str, entry: dict) -> "Writer":
         if worst > 1e-3:
             sys.exit(f"{name}: the bind poses of the mesh and the skeleton differ (max {worst})")
     mesh_node, node_map = copy_skeleton(out, anim_src)
-    copy_mesh(out, mesh, mesh_node, entry.get("prims"), remap, textures)
+    copy_mesh(out, mesh, mesh_node, entry.get("prims"), remap, textures, entry.get("recolor"), name)
     copy_animations(out, anim_src, node_map, entry.get("padding", 0), entry.get("clips"),
                     entry.get("clip_prefix", ""))
     out.json["meshes"][0]["name"] = f"{name}-lod0"

@@ -17,7 +17,7 @@ A model ripped from a game is the game's content. A mod repository keeps only th
 |---|---|
 | `games` | The discs the models need, the mod's own game included. At an install, the extractor checks the player has each one. |
 | `rips` | Each rip folder the models read (`jak2/forresca`) and the DGO it comes from (`FRA.DGO`). |
-| `models` | One entry per model: `level` (the level whose `.fr3` gets the mesh), `mesh` (`<game>/<rip folder>/<rip file>`), and optionally `prims`, `skeleton`, `padding`, `clips`, `clip_prefix`, `textures_from`, `texture_prefix`. |
+| `models` | One entry per model: `level` (the level whose `.fr3` gets the mesh), `mesh` (`<game>/<rip folder>/<rip file>`), and optionally `prims`, `skeleton`, `padding`, `clips`, `clip_prefix`, `textures_from`, `texture_prefix`, `recolor` (a color variant: `{"hues": [-15, 15], "rotate": 217, "min_saturation": 0.3}` turns the texels of that hue window and saturation by 217 degrees, red to blue; `"textures"` limits it to some images; a changed image is renamed `<image>-<model>`, so two variants of one rip can share a level). |
 | `files` | Other files copied from a disc, such as a music: `{"custom_assets/jak3/music/X.MUS": "jak2/MUS/DANGER4.MUS"}`. |
 
 Every key is described at the top of [`scripts/modding/mod_models.py`](../../../scripts/modding/mod_models.py).
