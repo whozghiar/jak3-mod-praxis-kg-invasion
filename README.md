@@ -10,6 +10,9 @@
 
 ---
 
+> [!NOTE]
+> This mod moved from the `jak3/features/praxis-kg-invasion` branch of [whozghiar/jak-project](https://github.com/whozghiar/jak-project) to this repository. Earlier releases stay installable from the launcher catalog.
+
 ## Overview
 Jak 2's Krimzon Guard invades Jak 3's Haven City. Red and yellow Krimzon Guards, backed by red
 jetpack guards, fight the Freedom League's blue guards street by street, in the districts you pick.
