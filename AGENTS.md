@@ -30,6 +30,11 @@ only when its description matches the task.
   Code, a PreToolUse hook (`.claude/hooks/block_game_launch.py`) enforces this. The one
   exception: when the user has authorized launches for tests, run smoke tests through
   `python scripts/modding/smoke_test.py run`, one scenario per call.
+- **Several instances, one port each.** `gk --port <n>` gives an instance its own listener
+  (default 8111 + the game version: 8112 Jak 1, 8113 Jak 2, 8114 Jak 3); a compiler reaches it
+  with `(lt "127.0.0.1" <n>)`, and a second `goalc` takes its own `-p <nREPL port>` (default
+  8181) and `--debug-port`. On one shared port, Windows leaves the second instance without a
+  listener and Linux lets the compiler reach either instance.
 - **Smoke test every big feature.** After a mod gains a big feature, test it in game with a
   scenario and record the result in the mod's test notebook,
   `docs/modding/current_mod/<slug>_tests.md`: the `smoke-tests` skill.
